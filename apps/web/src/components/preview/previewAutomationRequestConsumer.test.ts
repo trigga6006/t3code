@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   type PreviewAutomationRequest,
   type PreviewAutomationResponse,
+  type PreviewAutomationStreamEvent,
   PreviewTabId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -17,6 +18,8 @@ import {
 const environmentId = EnvironmentId.make("environment-1");
 const threadId = ThreadId.make("thread-1");
 const tabId = PreviewTabId.make("tab-1");
+const clientId = "client-1";
+const connectionId = "connection-1";
 
 const request = (
   requestId: string,
@@ -30,10 +33,88 @@ const request = (
   ...overrides,
 });
 
+const requestEvent = (
+  requestId: string,
+  overrides: Partial<PreviewAutomationRequest> = {},
+  eventConnectionId = connectionId,
+): PreviewAutomationStreamEvent => ({
+  type: "request",
+  connectionId: eventConnectionId,
+  request: request(requestId, overrides),
+});
+
+const consumerState = (handleRequest: (request: PreviewAutomationRequest) => Promise<unknown>) => ({
+  connectionAtom: Atom.make<string | null>(null),
+  requestHandlerAtom: Atom.make({ handle: handleRequest }),
+});
+
 describe("previewAutomationRequestConsumer", () => {
+  it("acknowledges a replacement stream before consuming requests from it", async () => {
+    const requestsAtom = Atom.make(
+      AsyncResult.success<PreviewAutomationStreamEvent, Error>({
+        type: "connected",
+        connectionId,
+      }),
+    );
+    const handleRequest = vi.fn(async () => undefined);
+    const respond = vi.fn(async () => undefined);
+    const state = consumerState(handleRequest);
+    const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+      requestsAtom,
+      clientId,
+      connectionAtom: state.connectionAtom,
+      environmentId,
+      requestHandlerAtom: state.requestHandlerAtom,
+      respond,
+      label: "test:preview-automation-connected",
+    });
+    const registry = AtomRegistry.make();
+
+    registry.mount(consumerAtom);
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("request-after-connect")));
+
+    await vi.waitFor(() => expect(registry.get(state.connectionAtom)).toBe(connectionId));
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1));
+    expect(handleRequest).toHaveBeenCalledTimes(1);
+    registry.dispose();
+  });
+
+  it("drops late requests from an older stream generation", async () => {
+    const requestsAtom = Atom.make(
+      AsyncResult.success<PreviewAutomationStreamEvent, Error>({
+        type: "connected",
+        connectionId: "connection-2",
+      }),
+    );
+    const handleRequest = vi.fn(async () => undefined);
+    const respond = vi.fn(async () => undefined);
+    const state = consumerState(handleRequest);
+    const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+      requestsAtom,
+      clientId,
+      connectionAtom: state.connectionAtom,
+      environmentId,
+      requestHandlerAtom: state.requestHandlerAtom,
+      respond,
+      label: "test:preview-automation-stale-generation",
+    });
+    const registry = AtomRegistry.make();
+
+    registry.mount(consumerAtom);
+    registry.set(
+      requestsAtom,
+      AsyncResult.success(requestEvent("request-stale", {}, "connection-1")),
+    );
+
+    await vi.waitFor(() => expect(registry.get(state.connectionAtom)).toBe("connection-2"));
+    expect(handleRequest).not.toHaveBeenCalled();
+    expect(respond).not.toHaveBeenCalled();
+    registry.dispose();
+  });
+
   it("consumes every request emitted before React can render", async () => {
-    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationRequest, Error>>(
-      AsyncResult.initial<PreviewAutomationRequest, Error>(false),
+    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+      AsyncResult.initial<PreviewAutomationStreamEvent, Error>(false),
     );
     const handleRequest = vi.fn(async (value: PreviewAutomationRequest) => ({
       requestId: value.requestId,
@@ -42,18 +123,21 @@ describe("previewAutomationRequestConsumer", () => {
     const respond = vi.fn(async (response: PreviewAutomationResponse) => {
       responses.push(response);
     });
+    const state = consumerState(handleRequest);
     const consumerAtom = createPreviewAutomationRequestConsumerAtom({
       requestsAtom,
+      clientId,
+      connectionAtom: state.connectionAtom,
       environmentId,
-      handleRequest,
+      requestHandlerAtom: state.requestHandlerAtom,
       respond,
       label: "test:preview-automation-consumer",
     });
     const registry = AtomRegistry.make();
     registry.mount(consumerAtom);
 
-    registry.set(requestsAtom, AsyncResult.success(request("request-1")));
-    registry.set(requestsAtom, AsyncResult.success(request("request-2")));
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("request-1")));
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("request-2")));
 
     await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(2));
     expect(handleRequest.mock.calls.map(([value]) => value.requestId)).toEqual([
@@ -64,15 +148,50 @@ describe("previewAutomationRequestConsumer", () => {
     registry.dispose();
   });
 
-  it("consumes a request that arrived immediately before the consumer mounted", async () => {
-    const requestsAtom = Atom.make(
-      AsyncResult.success<PreviewAutomationRequest, Error>(request("request-ready")),
+  it("uses the latest request handler without rebuilding the stream consumer", async () => {
+    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+      AsyncResult.initial<PreviewAutomationStreamEvent, Error>(false),
     );
+    const firstHandler = vi.fn(async () => "first");
+    const secondHandler = vi.fn(async () => "second");
     const respond = vi.fn(async (_response: PreviewAutomationResponse) => undefined);
+    const state = consumerState(firstHandler);
     const consumerAtom = createPreviewAutomationRequestConsumerAtom({
       requestsAtom,
+      clientId,
+      connectionAtom: state.connectionAtom,
       environmentId,
-      handleRequest: async () => undefined,
+      requestHandlerAtom: state.requestHandlerAtom,
+      respond,
+      label: "test:preview-automation-latest-handler",
+    });
+    const registry = AtomRegistry.make();
+    registry.mount(consumerAtom);
+
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("request-first")));
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1));
+    registry.set(state.requestHandlerAtom, { handle: secondHandler });
+    registry.set(requestsAtom, AsyncResult.success(requestEvent("request-second")));
+
+    await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(2));
+    expect(firstHandler).toHaveBeenCalledTimes(1);
+    expect(secondHandler).toHaveBeenCalledTimes(1);
+    expect(respond.mock.calls.map(([response]) => response.result)).toEqual(["first", "second"]);
+    registry.dispose();
+  });
+
+  it("consumes a request that arrived immediately before the consumer mounted", async () => {
+    const requestsAtom = Atom.make(
+      AsyncResult.success<PreviewAutomationStreamEvent, Error>(requestEvent("request-ready")),
+    );
+    const respond = vi.fn(async (_response: PreviewAutomationResponse) => undefined);
+    const state = consumerState(async () => undefined);
+    const consumerAtom = createPreviewAutomationRequestConsumerAtom({
+      requestsAtom,
+      clientId,
+      connectionAtom: state.connectionAtom,
+      environmentId,
+      requestHandlerAtom: state.requestHandlerAtom,
       respond,
       label: "test:preview-automation-initial-request",
     });
@@ -81,7 +200,12 @@ describe("previewAutomationRequestConsumer", () => {
     registry.mount(consumerAtom);
 
     await vi.waitFor(() => expect(respond).toHaveBeenCalledTimes(1));
-    expect(respond).toHaveBeenCalledWith({ requestId: "request-ready", ok: true });
+    expect(respond).toHaveBeenCalledWith({
+      clientId,
+      connectionId,
+      requestId: "request-ready",
+      ok: true,
+    });
     registry.dispose();
   });
 
@@ -145,16 +269,19 @@ describe("previewAutomationRequestConsumer", () => {
   });
 
   it("sanitizes unexpected handler failures at the response boundary", async () => {
-    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationRequest, Error>>(
-      AsyncResult.initial<PreviewAutomationRequest, Error>(false),
+    const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
+      AsyncResult.initial<PreviewAutomationStreamEvent, Error>(false),
     );
     const responses: PreviewAutomationResponse[] = [];
+    const state = consumerState(async () => {
+      throw new Error("desktop IPC secret: do-not-return");
+    });
     const consumerAtom = createPreviewAutomationRequestConsumerAtom({
       requestsAtom,
+      clientId,
+      connectionAtom: state.connectionAtom,
       environmentId,
-      handleRequest: async () => {
-        throw new Error("desktop IPC secret: do-not-return");
-      },
+      requestHandlerAtom: state.requestHandlerAtom,
       respond: async (response) => {
         responses.push(response);
       },
@@ -166,7 +293,7 @@ describe("previewAutomationRequestConsumer", () => {
     registry.set(
       requestsAtom,
       AsyncResult.success(
-        request("request-failed", {
+        requestEvent("request-failed", {
           operation: "click",
           tabId,
         }),
@@ -175,6 +302,8 @@ describe("previewAutomationRequestConsumer", () => {
 
     await vi.waitFor(() => expect(responses).toHaveLength(1));
     expect(responses[0]).toEqual({
+      clientId,
+      connectionId,
       requestId: "request-failed",
       ok: false,
       error: {

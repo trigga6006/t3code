@@ -411,8 +411,13 @@ export const PreviewAutomationRecordingArtifact = Schema.Struct({
 });
 export type PreviewAutomationRecordingArtifact = typeof PreviewAutomationRecordingArtifact.Type;
 
+export const PreviewAutomationClientId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
+export const PreviewAutomationConnectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
+export type PreviewAutomationConnectionId = typeof PreviewAutomationConnectionId.Type;
+
 export const PreviewAutomationOwnerIdentity = Schema.Struct({
-  clientId: TrimmedNonEmptyString,
+  clientId: PreviewAutomationClientId,
   environmentId: EnvironmentId,
   threadId: ThreadId,
 });
@@ -420,12 +425,16 @@ export type PreviewAutomationOwnerIdentity = typeof PreviewAutomationOwnerIdenti
 
 export const PreviewAutomationOwner = Schema.Struct({
   ...PreviewAutomationOwnerIdentity.fields,
-  tabId: Schema.NullOr(PreviewTabId),
-  visible: Schema.Boolean,
   supportsAutomation: Schema.Boolean,
-  focusedAt: Schema.String,
 });
 export type PreviewAutomationOwner = typeof PreviewAutomationOwner.Type;
+
+export const PreviewAutomationOwnerFocus = Schema.Struct({
+  ...PreviewAutomationOwnerIdentity.fields,
+  connectionId: PreviewAutomationConnectionId,
+  focused: Schema.Boolean,
+});
+export type PreviewAutomationOwnerFocus = typeof PreviewAutomationOwnerFocus.Type;
 
 export const PreviewAutomationRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
@@ -437,7 +446,22 @@ export const PreviewAutomationRequest = Schema.Struct({
 });
 export type PreviewAutomationRequest = typeof PreviewAutomationRequest.Type;
 
+export const PreviewAutomationStreamEvent = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("connected"),
+    connectionId: PreviewAutomationConnectionId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("request"),
+    connectionId: PreviewAutomationConnectionId,
+    request: PreviewAutomationRequest,
+  }),
+]);
+export type PreviewAutomationStreamEvent = typeof PreviewAutomationStreamEvent.Type;
+
 export const PreviewAutomationResponse = Schema.Struct({
+  clientId: PreviewAutomationClientId,
+  connectionId: PreviewAutomationConnectionId,
   requestId: TrimmedNonEmptyString,
   ok: Schema.Boolean,
   result: Schema.optional(Schema.Unknown),
@@ -477,6 +501,7 @@ const PreviewAutomationScopeErrorFields = {
 const PreviewAutomationRequestErrorFields = {
   ...PreviewAutomationScopeErrorFields,
   clientId: TrimmedNonEmptyString,
+  connectionId: PreviewAutomationConnectionId,
   requestId: TrimmedNonEmptyString,
   tabId: Schema.optional(PreviewTabId),
   timeoutMs: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -505,6 +530,7 @@ export class PreviewAutomationNoFocusedOwnerError extends Schema.TaggedErrorClas
   {
     ...PreviewAutomationScopeErrorFields,
     clientId: Schema.optional(TrimmedNonEmptyString),
+    connectionId: Schema.optional(PreviewAutomationConnectionId),
     requestId: Schema.optional(TrimmedNonEmptyString),
     tabId: Schema.optional(PreviewTabId),
     timeoutMs: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -615,18 +641,6 @@ export class PreviewAutomationResultTooLargeError extends Schema.TaggedErrorClas
   }
 }
 
-export class PreviewAutomationHostNotConnectedError extends Schema.TaggedErrorClass<PreviewAutomationHostNotConnectedError>()(
-  "PreviewAutomationHostNotConnectedError",
-  {
-    ...PreviewAutomationScopeErrorFields,
-    clientId: TrimmedNonEmptyString,
-  },
-) {
-  override get message(): string {
-    return `Preview automation host ${this.clientId} is not connected for ${this.operation}.`;
-  }
-}
-
 export class PreviewAutomationClientDisconnectedError extends Schema.TaggedErrorClass<PreviewAutomationClientDisconnectedError>()(
   "PreviewAutomationClientDisconnectedError",
   PreviewAutomationRequestErrorFields,
@@ -676,7 +690,6 @@ export const PreviewAutomationError = Schema.Union([
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationResultTooLargeError,
-  PreviewAutomationHostNotConnectedError,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationRequestQueueClosedError,
   PreviewAutomationRemoteUnavailableError,

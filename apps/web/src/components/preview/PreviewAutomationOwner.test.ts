@@ -1,31 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { observeAutomationOwnerConnectedGeneration } from "./PreviewAutomationOwner";
+import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 
-describe("observeAutomationOwnerConnectedGeneration", () => {
-  it("reports ownership when the initial transport generation connects", () => {
-    const initial = observeAutomationOwnerConnectedGeneration(null, 1);
-    expect(initial).toEqual({
-      nextGeneration: 1,
-      shouldReport: true,
-    });
+describe("createPreviewAutomationClientId", () => {
+  it("creates bounded cryptographically random identities for independent owner lifetimes", () => {
+    const clientIds = Array.from({ length: 32 }, createPreviewAutomationClientId);
 
-    const disconnected = observeAutomationOwnerConnectedGeneration(initial.nextGeneration, null);
-    expect(disconnected).toEqual({
-      nextGeneration: 1,
-      shouldReport: false,
-    });
-
-    expect(observeAutomationOwnerConnectedGeneration(disconnected.nextGeneration, 2)).toEqual({
-      nextGeneration: 2,
-      shouldReport: true,
-    });
-  });
-
-  it("does not re-report for repeated connected state from the same generation", () => {
-    expect(observeAutomationOwnerConnectedGeneration(3, 3)).toEqual({
-      nextGeneration: 3,
-      shouldReport: false,
-    });
+    expect(new Set(clientIds).size).toBe(clientIds.length);
+    expect(clientIds.every((clientId) => clientId.startsWith("preview-"))).toBe(true);
+    expect(clientIds.every((clientId) => clientId.length <= 128)).toBe(true);
   });
 });

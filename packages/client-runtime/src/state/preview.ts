@@ -82,24 +82,16 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: automationScheduler,
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.requestId]),
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.connectionId, input.requestId]),
       },
     }),
-    reportAutomationOwner: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:automation-report-owner",
-      tag: WS_METHODS.previewAutomationReportOwner,
+    focusAutomationOwner: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:automation-focus-owner",
+      tag: WS_METHODS.previewAutomationFocusOwner,
       scheduler: automationScheduler,
       concurrency: {
-        mode: "serial",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.clientId]),
-      },
-    }),
-    clearAutomationOwner: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:automation-clear-owner",
-      tag: WS_METHODS.previewAutomationClearOwner,
-      scheduler: automationScheduler,
-      concurrency: {
-        mode: "serial",
+        mode: "latest",
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input.clientId]),
       },
     }),
