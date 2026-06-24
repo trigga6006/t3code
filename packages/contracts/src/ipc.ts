@@ -75,13 +75,13 @@ import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
   PreviewAutomationOwner,
-  PreviewAutomationOwnerIdentity,
+  PreviewAutomationOwnerFocus,
   PreviewAutomationPressInput,
-  PreviewAutomationRequest,
   PreviewAutomationResponse,
   PreviewAutomationScrollInput,
   PreviewAutomationSnapshot,
   PreviewAutomationStatus,
+  PreviewAutomationStreamEvent,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "./previewAutomation.ts";
@@ -1160,13 +1160,12 @@ export interface EnvironmentApi {
     reportStatus: (input: typeof PreviewReportStatusInput.Encoded) => Promise<void>;
     automation: {
       connect: (
-        input: { clientId: string },
-        callback: (request: PreviewAutomationRequest) => void,
+        input: PreviewAutomationOwner,
+        callback: (event: PreviewAutomationStreamEvent) => void,
         options?: { onResubscribe?: () => void },
       ) => () => void;
       respond: (response: PreviewAutomationResponse) => Promise<void>;
-      reportOwner: (owner: PreviewAutomationOwner) => Promise<void>;
-      clearOwner: (input: PreviewAutomationOwnerIdentity) => Promise<void>;
+      focusOwner: (input: PreviewAutomationOwnerFocus) => Promise<void>;
     };
     onEvent: (
       callback: (event: PreviewEvent) => void,
