@@ -108,9 +108,9 @@ import {
 import {
   PreviewAutomationError,
   PreviewAutomationOwner,
-  PreviewAutomationOwnerIdentity,
-  PreviewAutomationRequest,
+  PreviewAutomationOwnerFocus,
   PreviewAutomationResponse,
+  PreviewAutomationStreamEvent,
 } from "./previewAutomation.ts";
 import {
   ServerConfigStreamEvent,
@@ -196,8 +196,7 @@ export const WS_METHODS = {
   previewReportStatus: "preview.reportStatus",
   previewAutomationConnect: "previewAutomation.connect",
   previewAutomationRespond: "previewAutomation.respond",
-  previewAutomationReportOwner: "previewAutomation.reportOwner",
-  previewAutomationClearOwner: "previewAutomation.clearOwner",
+  previewAutomationFocusOwner: "previewAutomation.focusOwner",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -551,7 +550,7 @@ export const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus,
 
 export const WsPreviewAutomationConnectRpc = Rpc.make(WS_METHODS.previewAutomationConnect, {
   payload: PreviewAutomationOwner,
-  success: PreviewAutomationRequest,
+  success: PreviewAutomationStreamEvent,
   error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
   stream: true,
 });
@@ -561,14 +560,9 @@ export const WsPreviewAutomationRespondRpc = Rpc.make(WS_METHODS.previewAutomati
   error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
 });
 
-export const WsPreviewAutomationReportOwnerRpc = Rpc.make(WS_METHODS.previewAutomationReportOwner, {
-  payload: PreviewAutomationOwner,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
-});
-
-export const WsPreviewAutomationClearOwnerRpc = Rpc.make(WS_METHODS.previewAutomationClearOwner, {
-  payload: PreviewAutomationOwnerIdentity,
-  error: Schema.Union([PreviewAutomationError, EnvironmentAuthorizationError]),
+export const WsPreviewAutomationFocusOwnerRpc = Rpc.make(WS_METHODS.previewAutomationFocusOwner, {
+  payload: PreviewAutomationOwnerFocus,
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
@@ -734,8 +728,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewReportStatusRpc,
   WsPreviewAutomationConnectRpc,
   WsPreviewAutomationRespondRpc,
-  WsPreviewAutomationReportOwnerRpc,
-  WsPreviewAutomationClearOwnerRpc,
+  WsPreviewAutomationFocusOwnerRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsSubscribeServerConfigRpc,
