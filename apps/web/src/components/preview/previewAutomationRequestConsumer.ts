@@ -39,7 +39,6 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
     get.mount(options.requestHandlerAtom);
     let disposed = false;
     let activeConnectionId: PreviewAutomationStreamEvent["connectionId"] | null = null;
-    let connectionExplicitlyAnnounced = false;
     let reportedConnectionId: PreviewAutomationStreamEvent["connectionId"] | null = null;
     let requestsVersion = 0;
 
@@ -48,12 +47,10 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
       const event = result.value;
       if (event.type === "connected") {
         activeConnectionId = event.connectionId;
-        connectionExplicitlyAnnounced = true;
       } else if (activeConnectionId === null) {
         activeConnectionId = event.connectionId;
       } else if (activeConnectionId !== event.connectionId) {
-        if (connectionExplicitlyAnnounced) return;
-        activeConnectionId = event.connectionId;
+        return;
       }
       if (reportedConnectionId !== event.connectionId) {
         reportedConnectionId = event.connectionId;
@@ -98,7 +95,6 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
     const initialRequest = get.once(options.requestsAtom);
     if (AsyncResult.isSuccess(initialRequest)) {
       activeConnectionId = initialRequest.value.connectionId;
-      connectionExplicitlyAnnounced = initialRequest.value.type === "connected";
       if (initialRequest.value.type === "connected") {
         reportedConnectionId = initialRequest.value.connectionId;
         get.set(options.connectionAtom, initialRequest.value.connectionId);

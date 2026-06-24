@@ -296,7 +296,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       clients.set(owner.clientId, {
         ...currentOwner,
         focused: owner.focused,
-        focusOrder: owner.focused ? focusSequence : currentOwner.focusOrder,
+        focusOrder: owner.focused ? focusSequence : 0,
       });
       return { ...current, clients, focusSequence };
     });
