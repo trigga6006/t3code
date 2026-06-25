@@ -29,8 +29,8 @@ import { PreviewChromeRow } from "./PreviewChromeRow";
 import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
-import { PreviewViewportControl } from "./PreviewViewportControl";
 import { subscribeBrowserViewportChange } from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
@@ -172,6 +172,18 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
     },
     [resize, tabId, threadRef],
   );
+
+  const handleToggleDeviceToolbar = () => {
+    if (viewport._tag !== "fill") {
+      void handleViewportChange(FILL_PREVIEW_VIEWPORT).catch(() => undefined);
+      return;
+    }
+
+    const responsiveSize = panelRect
+      ? resolveResponsiveBrowserViewportSize(panelRect, desktopOverlay?.zoomFactor)
+      : { width: 1024, height: 768 };
+    void handleViewportChange({ _tag: "freeform", ...responsiveSize }).catch(() => undefined);
+  };
 
   useEffect(() => {
     if (!tabId || !visible) return;
@@ -570,26 +582,13 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
         }
         trailingActions={
           previewBridge ? (
-            <div className="flex items-center gap-0.5">
-              <PreviewViewportControl
-                setting={viewport}
-                disabled={!tabId || desktopOverlay === null}
-                fillSize={
-                  panelRect
-                    ? {
-                        width: panelRect.width / (desktopOverlay?.zoomFactor ?? 1),
-                        height: panelRect.height / (desktopOverlay?.zoomFactor ?? 1),
-                      }
-                    : null
-                }
-                onChange={handleViewportChange}
-              />
-              <PreviewMoreMenu
-                tabId={tabId}
-                hasWebContents={desktopOverlay !== null}
-                zoomFactor={desktopOverlay?.zoomFactor ?? 1}
-              />
-            </div>
+            <PreviewMoreMenu
+              tabId={tabId}
+              hasWebContents={desktopOverlay !== null}
+              zoomFactor={desktopOverlay?.zoomFactor ?? 1}
+              deviceToolbarVisible={viewport._tag !== "fill"}
+              onToggleDeviceToolbar={handleToggleDeviceToolbar}
+            />
           ) : null
         }
       />
