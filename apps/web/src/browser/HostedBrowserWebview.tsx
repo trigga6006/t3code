@@ -11,6 +11,7 @@ import { cn } from "~/lib/utils";
 import { useActiveBrowserRecordingTabId } from "./browserRecording";
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { browserViewportSettingKey } from "./browserViewportLayout";
+import { reconcileLockedAspectRatio } from "./browserDeviceToolbarState";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
@@ -112,6 +113,11 @@ export function HostedBrowserWebview(props: {
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
   const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
+  const viewportAspectRatio =
+    viewportWidth === null || viewportHeight === null ? null : viewportWidth / viewportHeight;
+  useEffect(() => {
+    setLockedAspectRatio((current) => reconcileLockedAspectRatio(current, viewportAspectRatio));
+  }, [viewportAspectRatio]);
   const hiddenSize =
     viewport._tag !== "fill"
       ? {
