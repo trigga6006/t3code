@@ -1142,7 +1142,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // failed guest is no longer "loading", but it has not successfully
         // navigated anywhere. Keep the failure until a new load actually starts.
         const navStatus =
-          current.navStatus.kind === "LoadFailed" && computedNavStatus.kind === "Success"
+          current.navStatus.kind === "LoadFailed" &&
+          computedNavStatus.kind === "Success" &&
+          computedNavStatus.url === current.navStatus.url
             ? current.navStatus
             : computedNavStatus;
         const state: PreviewTabState = {
