@@ -213,6 +213,7 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
 export function applyPreviewServerSnapshot(
   ref: ScopedThreadRef,
   snapshot: PreviewSessionSnapshot | null,
+  options?: { preserveActiveTab?: boolean },
 ): void {
   updateThreadPreviewState(ref, (current) => {
     if (!snapshot && current.snapshot === null) return current;
@@ -233,12 +234,16 @@ export function applyPreviewServerSnapshot(
       snapshot.navStatus._tag !== "Idle"
         ? dedupeRecentUrls(current.recentlySeenUrls, snapshot.navStatus.url)
         : current.recentlySeenUrls;
+    const sessions = { ...current.sessions, [snapshot.tabId]: snapshot };
+    const keepActive = options?.preserveActiveTab && current.activeTabId !== null;
+    const activeTabId = keepActive ? current.activeTabId : snapshot.tabId;
+    const activeSnapshot = sessions[activeTabId!] ?? snapshot;
     return {
       ...current,
-      snapshot,
-      sessions: { ...current.sessions, [snapshot.tabId]: snapshot },
-      activeTabId: snapshot.tabId,
-      desktopOverlay: current.desktopByTabId[snapshot.tabId] ?? null,
+      snapshot: activeSnapshot,
+      sessions,
+      activeTabId,
+      desktopOverlay: current.desktopByTabId[activeTabId!] ?? null,
       recentlySeenUrls,
     };
   });

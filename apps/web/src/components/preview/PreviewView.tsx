@@ -29,7 +29,10 @@ import { PreviewChromeRow } from "./PreviewChromeRow";
 import { formatPreviewUrl } from "./previewUrlPresentation";
 import { PreviewEmptyState } from "./PreviewEmptyState";
 import { PreviewMoreMenu } from "./PreviewMoreMenu";
-import { subscribeBrowserViewportChange } from "~/browser/browserViewportActions";
+import {
+  commitBrowserViewportChange,
+  subscribeBrowserViewportChange,
+} from "~/browser/browserViewportActions";
 import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
@@ -174,15 +177,18 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   );
 
   const handleToggleDeviceToolbar = () => {
+    if (!tabId) return;
     if (viewport._tag !== "fill") {
-      void handleViewportChange(FILL_PREVIEW_VIEWPORT).catch(() => undefined);
+      void commitBrowserViewportChange(tabId, FILL_PREVIEW_VIEWPORT).catch(() => undefined);
       return;
     }
 
     const responsiveSize = panelRect
       ? resolveResponsiveBrowserViewportSize(panelRect, desktopOverlay?.zoomFactor)
       : { width: 1024, height: 768 };
-    void handleViewportChange({ _tag: "freeform", ...responsiveSize }).catch(() => undefined);
+    void commitBrowserViewportChange(tabId, { _tag: "freeform", ...responsiveSize }).catch(
+      () => undefined,
+    );
   };
 
   useEffect(() => {

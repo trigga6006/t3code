@@ -278,7 +278,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             throw squashAtomCommandFailure(result);
           }
           for (const snapshot of result.value.sessions) {
-            applyPreviewServerSnapshot(threadRef, snapshot);
+            applyPreviewServerSnapshot(threadRef, snapshot, { preserveActiveTab: true });
           }
           state = readThreadPreviewState(threadRef);
         }
@@ -374,7 +374,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             if (result._tag === "Failure") {
               throw squashAtomCommandFailure(result);
             }
-            applyPreviewServerSnapshot(threadRef, result.value);
+            applyPreviewServerSnapshot(threadRef, result.value, { preserveActiveTab: true });
             const viewport = await waitForRenderedViewport(
               ready.tabId,
               setting,
