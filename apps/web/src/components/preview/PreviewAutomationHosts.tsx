@@ -14,7 +14,11 @@ import {
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
-import { applyPreviewServerSnapshot, readThreadPreviewState } from "~/previewStateStore";
+import {
+  applyPreviewServerSnapshot,
+  prunePreviewSessions,
+  readThreadPreviewState,
+} from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import { startBrowserRecording, stopBrowserRecording } from "~/browser/browserRecording";
@@ -190,9 +194,12 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           if (result._tag === "Failure") {
             throw squashAtomCommandFailure(result);
           }
+          const serverTabIds = new Set<string>();
           for (const snapshot of result.value.sessions) {
             applyPreviewServerSnapshot(threadRef, snapshot);
+            serverTabIds.add(snapshot.tabId);
           }
+          prunePreviewSessions(threadRef, serverTabIds);
           state = readThreadPreviewState(threadRef);
         }
         tabId = request.tabId ?? state.snapshot?.tabId ?? null;
@@ -249,6 +256,13 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             );
             if (reusedExistingTab && input.url && previewBridge) {
               await previewBridge.navigate(activeTabId, input.url);
+              await waitForNavigationReadiness(
+                threadRef,
+                request.requestId,
+                activeTabId,
+                "load",
+                request.timeoutMs,
+              );
             }
             return await currentStatus(threadRef, activeTabId);
           }

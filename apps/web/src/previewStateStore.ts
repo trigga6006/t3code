@@ -299,6 +299,21 @@ export function cancelPreviewSessionClose(
   });
 }
 
+export function prunePreviewSessions(
+  ref: ScopedThreadRef,
+  serverTabIds: ReadonlySet<string>,
+): void {
+  updateThreadPreviewState(ref, (current) => {
+    let result = current;
+    for (const tabId of Object.keys(current.sessions)) {
+      if (!serverTabIds.has(tabId)) {
+        result = removeSession(result, tabId);
+      }
+    }
+    return result;
+  });
+}
+
 export function setActivePreviewTab(ref: ScopedThreadRef, tabId: string): void {
   updateThreadPreviewState(ref, (current) => {
     const snapshot = current.sessions[tabId];
