@@ -653,6 +653,7 @@ const buildAppUnderTest = (options?: {
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
+            resize: () => Effect.die("PreviewManager not stubbed in this test"),
             reportStatus: () => Effect.void,
             refresh: () => Effect.void,
             close: () => Effect.void,

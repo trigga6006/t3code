@@ -1,4 +1,5 @@
 import {
+  PREVIEW_AUTOMATION_V1_OPERATIONS,
   PreviewAutomationClientDisconnectedError,
   PreviewAutomationControlInterruptedError,
   PreviewAutomationExecutionError,
@@ -60,6 +61,7 @@ interface ClientConnection {
   readonly clientId: string;
   readonly connectionId: string;
   readonly environmentId: PreviewAutomationHost["environmentId"];
+  readonly supportedOperations: ReadonlySet<PreviewAutomationOperation>;
   readonly focused: boolean;
   readonly focusOrder: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
@@ -116,6 +118,11 @@ const selectorDiagnosticsFromInput = (
 
 const hostAssignmentKey = (scope: McpInvocationContext.McpInvocationScope): string =>
   `${scope.environmentId}\u0000${scope.providerSessionId}`;
+
+const supportsOperation = (
+  connection: ClientConnection,
+  operation: PreviewAutomationOperation,
+): boolean => connection.supportedOperations.has(operation);
 
 type RemoteDetailKind = "null" | "array" | "object" | "string" | "number" | "boolean";
 
@@ -261,6 +268,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       clientId,
       connectionId,
       environmentId: host.environmentId,
+      supportedOperations: new Set(host.supportedOperations ?? PREVIEW_AUTOMATION_V1_OPERATIONS),
       focused: false,
       focusOrder: 0,
       queue,
@@ -365,22 +373,32 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       const assignmentKey = hostAssignmentKey(input.scope);
       const assigned = assignments.get(assignmentKey);
       const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
+      const hasLiveAssignment = assignedConnection?.environmentId === input.scope.environmentId;
       // Keep one provider session on one physical desktop runtime so a
       // multi-step browser interaction cannot jump between independent
-      // Electron cookie/DOM state. A dead lease is pruned above and may then
-      // fail over to the best remaining host.
+      // Electron cookie/DOM state. A live assignment that predates an
+      // operation is not silently moved to a newer client: the caller gets a
+      // capability failure and can deliberately start a fresh provider
+      // session. A dead lease is pruned above and may fail over.
       const connection =
-        assignedConnection?.environmentId === input.scope.environmentId
+        hasLiveAssignment && supportsOperation(assignedConnection, input.operation)
           ? assignedConnection
-          : Array.from(current.clients.values())
-              .filter((host) => host.environmentId === input.scope.environmentId)
-              .sort(
-                (left, right) =>
-                  Number(right.focused) - Number(left.focused) ||
-                  right.focusOrder - left.focusOrder,
-              )[0];
+          : hasLiveAssignment
+            ? undefined
+            : Array.from(current.clients.values())
+                .filter(
+                  (host) =>
+                    host.environmentId === input.scope.environmentId &&
+                    supportsOperation(host, input.operation),
+                )
+                .sort(
+                  (left, right) =>
+                    right.supportedOperations.size - left.supportedOperations.size ||
+                    Number(right.focused) - Number(left.focused) ||
+                    right.focusOrder - left.focusOrder,
+                )[0];
       if (!connection) {
-        assignments.delete(assignmentKey);
+        if (!hasLiveAssignment) assignments.delete(assignmentKey);
         return [undefined, { ...current, assignments }] as const;
       }
       assignments.set(assignmentKey, {

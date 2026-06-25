@@ -137,10 +137,11 @@ export async function startBrowserRecording(tabId: string): Promise<string> {
       activeTabId: active.tabId,
     });
   }
-  const rect = useBrowserSurfaceStore.getState().byTabId[tabId]?.rect;
+  const surface = useBrowserSurfaceStore.getState().byTabId[tabId];
+  const recordingSize = surface?.content ?? surface?.rect;
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, rect?.width ?? 1280);
-  canvas.height = Math.max(1, rect?.height ?? 800);
+  canvas.width = Math.max(1, recordingSize?.width ?? 1280);
+  canvas.height = Math.max(1, recordingSize?.height ?? 800);
   const context = canvas.getContext("2d", { alpha: false });
   if (!context) {
     throw new BrowserRecordingCanvasUnavailableError({

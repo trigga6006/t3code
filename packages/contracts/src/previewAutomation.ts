@@ -1,7 +1,14 @@
 import { Schema } from "effect";
 
 import { EnvironmentId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { PreviewTabId } from "./preview.ts";
+import {
+  PREVIEW_VIEWPORT_MAX_AREA,
+  PreviewRenderedViewportSize,
+  PreviewTabId,
+  PreviewViewportPresetId,
+  PreviewViewportSetting,
+  PreviewViewportSize,
+} from "./preview.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const BoundedUrl = Schema.String.check(Schema.isTrimmed())
@@ -18,7 +25,8 @@ const OptionalTimeoutMs = Schema.optional(
     .annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." }),
 ).annotate({ description: "Maximum wait in milliseconds. Defaults to 15000; maximum 60000." });
 
-export const PreviewAutomationOperation = Schema.Literals([
+/** Operations understood by desktop hosts predating viewport resizing. */
+export const PREVIEW_AUTOMATION_V1_OPERATIONS = [
   "status",
   "open",
   "navigate",
@@ -31,7 +39,15 @@ export const PreviewAutomationOperation = Schema.Literals([
   "waitFor",
   "recordingStart",
   "recordingStop",
-]);
+] as const;
+
+/** Advertised by current desktop hosts for mixed-version routing. */
+export const PREVIEW_AUTOMATION_OPERATIONS = [
+  ...PREVIEW_AUTOMATION_V1_OPERATIONS,
+  "resize",
+] as const;
+
+export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
 
 export const PreviewAutomationStatus = Schema.Struct({
@@ -41,6 +57,10 @@ export const PreviewAutomationStatus = Schema.Struct({
   url: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   loading: Schema.Boolean,
+  /** Optional for compatibility with desktop hosts predating viewport sizing. */
+  viewportSetting: Schema.optional(PreviewViewportSetting),
+  /** Measured guest-page viewport in CSS pixels when a webview is ready. */
+  viewport: Schema.optional(PreviewRenderedViewportSize),
 });
 export type PreviewAutomationStatus = typeof PreviewAutomationStatus.Type;
 
@@ -133,6 +153,80 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
       "Navigates the active browser tab. Provide exactly one of url or target; for most public pages use url.",
   });
 export type PreviewAutomationNavigateInput = typeof PreviewAutomationNavigateInput.Type;
+
+export const PreviewAutomationResizeInput = Schema.Struct({
+  mode: Schema.Literals(["fill", "freeform", "preset"]).annotate({
+    description:
+      "Viewport mode: fill follows the preview panel, freeform uses exact independently resizable dimensions, and preset uses a named device size.",
+  }),
+  preset: Schema.optional(
+    PreviewViewportPresetId.annotate({
+      description: "Common desktop, laptop, iPad, iPhone, Pixel, or Galaxy viewport preset.",
+    }),
+  ).annotate({
+    description: "Named device size. Required only when mode is preset.",
+  }),
+  width: Schema.optional(
+    PreviewViewportSize.fields.width.annotate({
+      description: "Freeform viewport width in CSS pixels. Required only in freeform mode.",
+    }),
+  ).annotate({
+    description: "Freeform viewport width in CSS pixels. Required only in freeform mode.",
+  }),
+  height: Schema.optional(
+    PreviewViewportSize.fields.height.annotate({
+      description: "Freeform viewport height in CSS pixels. Required only in freeform mode.",
+    }),
+  ).annotate({
+    description: "Freeform viewport height in CSS pixels. Required only in freeform mode.",
+  }),
+  orientation: Schema.optional(
+    Schema.Literals(["portrait", "landscape"]).annotate({
+      description:
+        "Orientation for a fixed device preset. Defaults to the preset's native orientation.",
+    }),
+  ).annotate({
+    description:
+      "Orientation for a named device preset. It is not accepted in fill or freeform mode.",
+  }),
+  timeoutMs: OptionalTimeoutMs,
+})
+  .check(
+    Schema.makeFilter((input) => {
+      const hasPreset = input.preset !== undefined;
+      const hasWidth = input.width !== undefined;
+      const hasHeight = input.height !== undefined;
+      if (hasWidth !== hasHeight) return "Custom dimensions require both width and height.";
+      if (input.mode === "fill") {
+        return !hasPreset && !hasWidth && input.orientation === undefined
+          ? true
+          : "Fill mode does not accept a preset, dimensions, or orientation.";
+      }
+      if (input.mode === "freeform") {
+        if (!hasWidth || !hasHeight || hasPreset || input.orientation !== undefined) {
+          return "Freeform mode requires width and height and does not accept a preset or orientation.";
+        }
+      } else if (!hasPreset || hasWidth || hasHeight) {
+        return "Preset mode requires a preset and does not accept custom dimensions.";
+      }
+      if (hasWidth && hasHeight && input.width! * input.height! > PREVIEW_VIEWPORT_MAX_AREA) {
+        return `Custom viewport area must not exceed ${PREVIEW_VIEWPORT_MAX_AREA} pixels.`;
+      }
+      return true;
+    }),
+  )
+  .annotate({
+    description:
+      "Sets the active browser tab to fill-panel, independently resizable freeform, or named device-preset sizing.",
+  });
+export type PreviewAutomationResizeInput = typeof PreviewAutomationResizeInput.Type;
+
+export const PreviewAutomationResizeResult = Schema.Struct({
+  tabId: PreviewTabId,
+  setting: PreviewViewportSetting,
+  viewport: PreviewRenderedViewportSize,
+});
+export type PreviewAutomationResizeResult = typeof PreviewAutomationResizeResult.Type;
 
 const Locator = TrimmedNonEmptyString.annotate({
   description:
@@ -424,6 +518,11 @@ export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity
 
 export const PreviewAutomationHost = Schema.Struct({
   ...PreviewAutomationHostIdentity.fields,
+  /**
+   * Missing means the pre-capability-negotiation V1 operation set. This lets
+   * a newer server safely coexist with an older desktop during rollout.
+   */
+  supportedOperations: Schema.optional(Schema.Array(PreviewAutomationOperation)),
 });
 export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 

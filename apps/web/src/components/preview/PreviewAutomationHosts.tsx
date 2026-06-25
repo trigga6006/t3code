@@ -3,14 +3,21 @@
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  FILL_PREVIEW_VIEWPORT,
+  PREVIEW_AUTOMATION_OPERATIONS,
   type EnvironmentId,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
+  type PreviewAutomationResizeInput,
+  type PreviewAutomationResizeResult,
   type PreviewAutomationHost as PreviewAutomationHostState,
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
+  type PreviewRenderedViewportSize,
+  type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -91,6 +98,75 @@ const waitForNavigationReadiness = async (
   });
 };
 
+interface ExecutablePreviewWebview extends Element {
+  readonly executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
+}
+
+const findPreviewWebview = (tabId: string): ExecutablePreviewWebview | null =>
+  Array.from(document.querySelectorAll<ExecutablePreviewWebview>("webview[data-preview-tab]")).find(
+    (candidate) => candidate.getAttribute("data-preview-tab") === tabId,
+  ) ?? null;
+
+const readWebviewViewport = async (
+  webview: ExecutablePreviewWebview,
+): Promise<PreviewRenderedViewportSize | null> => {
+  const value = await webview.executeJavaScript(
+    "({ width: window.innerWidth, height: window.innerHeight })",
+  );
+  if (typeof value !== "object" || value === null) return null;
+  const { width, height } = value as { readonly width?: unknown; readonly height?: unknown };
+  return typeof width === "number" &&
+    Number.isInteger(width) &&
+    width > 0 &&
+    typeof height === "number" &&
+    Number.isInteger(height) &&
+    height > 0
+    ? { width, height }
+    : null;
+};
+
+const readRenderedViewport = async (tabId: string): Promise<PreviewRenderedViewportSize | null> => {
+  const webview = findPreviewWebview(tabId);
+  if (!webview) return null;
+  return await readWebviewViewport(webview);
+};
+
+const waitForRenderedViewport = async (
+  tabId: string,
+  setting: PreviewViewportSetting,
+  timeoutMs: number,
+): Promise<PreviewRenderedViewportSize> => {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() <= deadline) {
+    try {
+      const webview = findPreviewWebview(tabId);
+      const expectedWidth = Number(webview?.getAttribute("data-preview-css-width"));
+      const expectedHeight = Number(webview?.getAttribute("data-preview-css-height"));
+      const modeApplied = webview?.getAttribute("data-preview-viewport-mode") === setting._tag;
+      const viewport = webview && modeApplied ? await readWebviewViewport(webview) : null;
+      const tolerance = setting._tag === "fill" ? 1 : 0;
+      if (
+        viewport &&
+        Number.isInteger(expectedWidth) &&
+        Number.isInteger(expectedHeight) &&
+        Math.abs(viewport.width - expectedWidth) <= tolerance &&
+        Math.abs(viewport.height - expectedHeight) <= tolerance
+      ) {
+        return viewport;
+      }
+    } catch (error) {
+      // Registration and navigation can transiently replace the guest while
+      // React applies the server snapshot. Retry until the operation deadline.
+      lastError = error;
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out applying browser viewport for tab ${tabId}`, {
+    cause: lastError,
+  });
+};
+
 const currentStatus = async (
   threadRef: ScopedThreadRef,
   requestedTabId: string | null,
@@ -101,9 +177,15 @@ const currentStatus = async (
   const visible = tabId
     ? (useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false)
     : false;
+  const viewportSetting = snapshot ? (snapshot.viewport ?? FILL_PREVIEW_VIEWPORT) : undefined;
+  const viewport = tabId ? await readRenderedViewport(tabId).catch(() => null) : null;
+  const viewportStatus = {
+    ...(viewportSetting === undefined ? {} : { viewportSetting }),
+    ...(viewport === null ? {} : { viewport }),
+  };
   if (tabId && previewBridge && state.desktopByTabId[tabId]) {
     const status = await previewBridge.automation.status(tabId);
-    return { ...status, visible };
+    return { ...status, visible, ...viewportStatus };
   }
   const navStatus = snapshot?.navStatus;
   return {
@@ -113,6 +195,7 @@ const currentStatus = async (
     url: navStatus && navStatus._tag !== "Idle" ? navStatus.url : null,
     title: navStatus && navStatus._tag !== "Idle" ? navStatus.title : null,
     loading: navStatus?._tag === "Loading",
+    ...viewportStatus,
   };
 };
 
@@ -144,6 +227,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
     () => ({
       clientId: automationClientId,
       environmentId,
+      supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
     }),
     [automationClientId, environmentId],
   );
@@ -155,6 +239,9 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
     reportFailure: false,
   });
   const open = useAtomCommand(previewEnvironment.open, {
+    reportFailure: false,
+  });
+  const resize = useAtomCommand(previewEnvironment.resize, {
     reportFailure: false,
   });
   const respondToAutomation = useAtomCommand(
@@ -272,6 +359,33 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             );
             return await currentStatus(threadRef, ready.tabId);
           }
+          case "resize": {
+            const ready = await requireReadyTab();
+            const input = request.input as PreviewAutomationResizeInput;
+            const setting = resolvePreviewViewport(input);
+            const result = await resize({
+              environmentId,
+              input: {
+                threadId: request.threadId,
+                tabId: ready.tabId,
+                viewport: setting,
+              },
+            });
+            if (result._tag === "Failure") {
+              throw squashAtomCommandFailure(result);
+            }
+            applyPreviewServerSnapshot(threadRef, result.value);
+            const viewport = await waitForRenderedViewport(
+              ready.tabId,
+              setting,
+              input.timeoutMs ?? request.timeoutMs,
+            );
+            return {
+              tabId: ready.tabId,
+              setting,
+              viewport,
+            } satisfies PreviewAutomationResizeResult;
+          }
           case "snapshot": {
             const ready = await requireReadyTab();
             return await ready.bridge.automation.snapshot(ready.tabId);
@@ -352,7 +466,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         });
       }
     },
-    [environmentId, listPreviews, open, registry],
+    [environmentId, listPreviews, open, registry, resize],
   );
   const [requestHandlerAtom] = useState(() => Atom.make({ handle: handleRequest }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);
