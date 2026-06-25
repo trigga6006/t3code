@@ -338,9 +338,7 @@ export const make = Effect.gen(function* () {
           Effect.andThen(
             Effect.sync(() => {
               developmentLoadRetryFiber = undefined;
-              if (!window.isDestroyed()) {
-                window.webContents.reload();
-              }
+              loadApplication();
             }),
           ),
         ),
