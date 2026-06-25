@@ -1109,7 +1109,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const zoomFactor = yield* attempt(
         { operation: "syncWebContentsState.getZoomFactor", tabId, webContentsId: wc.id },
         () => wc.getZoomFactor(),
-      );
+      ).pipe(Effect.orElseSucceed(() => undefined as number | undefined));
       const computedNavStatus = computeNavStatus(wc);
       const canGoBack = wc.navigationHistory.canGoBack();
       const canGoForward = wc.navigationHistory.canGoForward();
@@ -1129,7 +1129,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           navStatus,
           canGoBack,
           canGoForward,
-          zoomFactor,
+          zoomFactor: zoomFactor ?? current.zoomFactor,
           updatedAt,
         };
         return [
@@ -2108,9 +2108,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               }
             }
             const text = ${textJson};
-            const inserted = text.length > 0
-              ? document.execCommand("insertText", false, text)
-              : !clear || document.execCommand("delete", false);
+            let inserted = true;
+            if (text.length > 0) {
+              inserted = document.execCommand("insertText", false, text);
+            } else if (clear) {
+              if (textControl) { element.value = ""; } else { element.textContent = ""; }
+            }
             if (!inserted) return { notEditable: true };
             element.dispatchEvent(new Event("change", { bubbles: true }));
             return { ok: true };

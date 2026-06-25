@@ -277,11 +277,17 @@ export const automationClick = DesktopIpc.makeIpcMethod({
 export const automationType = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_AUTOMATION_TYPE_CHANNEL,
   payload: DesktopPreviewAutomationTypeInputSchema,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.preview.automationType")(function* ({ tabId, input }) {
-    const manager = yield* PreviewManager.PreviewManager;
-    yield* manager.automationType(tabId, input);
-  }),
+  result: Schema.NullOr(Schema.Struct({ notEditable: Schema.Literal(true) })),
+  handler: Effect.fn("desktop.ipc.preview.automationType")(
+    function* ({ tabId, input }) {
+      const manager = yield* PreviewManager.PreviewManager;
+      yield* manager.automationType(tabId, input);
+      return null;
+    },
+    Effect.catchTag("PreviewAutomationTargetNotEditableError", () =>
+      Effect.succeed({ notEditable: true as const }),
+    ),
+  ),
 });
 
 export const automationPress = DesktopIpc.makeIpcMethod({

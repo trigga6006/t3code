@@ -47,6 +47,7 @@ import {
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
+  PreviewAutomationTargetNotEditableError,
   PreviewAutomationTargetUnavailableError,
 } from "./previewAutomationErrors";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
@@ -429,10 +430,20 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           }
           case "type": {
             const ready = await requireReadyTab();
-            return await ready.bridge.automation.type(
+            const typeResult = await ready.bridge.automation.type(
               ready.tabId,
               request.input as Parameters<typeof ready.bridge.automation.type>[1],
             );
+            if (typeResult && typeof typeResult === "object" && "notEditable" in typeResult) {
+              throw new PreviewAutomationTargetNotEditableError({
+                requestId: request.requestId,
+                operation: request.operation,
+                environmentId,
+                threadId: request.threadId,
+                tabId: ready.tabId,
+              });
+            }
+            return typeResult;
           }
           case "press": {
             const ready = await requireReadyTab();
