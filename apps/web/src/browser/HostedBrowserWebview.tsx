@@ -11,6 +11,7 @@ import { cn } from "~/lib/utils";
 import { useActiveBrowserRecordingTabId } from "./browserRecording";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
+import { resolveResponsiveBrowserViewportSize } from "./browserViewportLayout";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
@@ -193,6 +194,7 @@ export function HostedBrowserWebview(props: {
           <BrowserDeviceToolbar
             setting={effectiveViewport}
             width={Math.max(1, Math.round(containerSize.width))}
+            responsiveSize={resolveResponsiveBrowserViewportSize(containerSize, zoomFactor)}
             onChange={commitViewportChange}
           />
         ) : null}

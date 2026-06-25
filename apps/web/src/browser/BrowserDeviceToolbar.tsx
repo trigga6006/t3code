@@ -5,6 +5,7 @@ import {
   PREVIEW_VIEWPORT_MAX_DIMENSION,
   PREVIEW_VIEWPORT_MIN_DIMENSION,
   type PreviewViewportSetting,
+  type PreviewViewportSize,
 } from "@t3tools/contracts";
 import { PREVIEW_VIEWPORT_PRESETS, resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { RotateCw, X } from "lucide-react";
@@ -38,10 +39,11 @@ const SELECT_ITEMS = [
 interface Props {
   readonly setting: Exclude<PreviewViewportSetting, { readonly _tag: "fill" }>;
   readonly width: number;
+  readonly responsiveSize?: PreviewViewportSize | undefined;
   readonly onChange: (setting: PreviewViewportSetting) => Promise<void>;
 }
 
-export function BrowserDeviceToolbar({ setting, width, onChange }: Props) {
+export function BrowserDeviceToolbar({ setting, width, responsiveSize, onChange }: Props) {
   const [pending, setPending] = useState(false);
   const [customSize, setCustomSize] = useState<{
     readonly width: string;
@@ -85,8 +87,9 @@ export function BrowserDeviceToolbar({ setting, width, onChange }: Props) {
   const selectViewport = (value: string | null) => {
     if (!value) return;
     if (value === RESPONSIVE_VALUE) {
-      if (setting._tag === "freeform") return;
-      apply({ _tag: "freeform", width: setting.width, height: setting.height });
+      const size = responsiveSize ?? { width: setting.width, height: setting.height };
+      if (size.width === setting.width && size.height === setting.height) return;
+      apply({ _tag: "freeform", ...size });
       return;
     }
     const preset = PREVIEW_VIEWPORT_PRESETS.find((candidate) => candidate.id === value);
@@ -154,13 +157,6 @@ export function BrowserDeviceToolbar({ setting, width, onChange }: Props) {
         onBlur={(event) => {
           const nextTarget = event.relatedTarget;
           if (nextTarget instanceof Node && event.currentTarget.contains(nextTarget)) return;
-          if (
-            nextTarget instanceof HTMLElement &&
-            nextTarget.closest("[data-browser-device-toolbar]")
-          ) {
-            setCustomSize(null);
-            return;
-          }
           applyCustomSize();
         }}
       >

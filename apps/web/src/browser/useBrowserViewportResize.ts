@@ -40,6 +40,8 @@ export function useBrowserViewportResize(options: {
   const { tabId, viewport, zoomFactor, containerSize, deviceToolbarVisible } = options;
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const dragVersionRef = useRef(0);
+  const keyboardSizeRef = useRef<PreviewViewportSize | null>(null);
+  const keyboardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dragViewport, setDragViewport] = useState<ViewportDrag | null>(null);
   const sourceViewportKey = viewportSettingKey(viewport);
   const sourceViewportKeyRef = useRef(sourceViewportKey);
@@ -65,6 +67,7 @@ export function useBrowserViewportResize(options: {
     () => () => {
       dragVersionRef.current += 1;
       dragCleanupRef.current?.();
+      if (keyboardTimerRef.current !== null) clearTimeout(keyboardTimerRef.current);
     },
     [],
   );
@@ -73,6 +76,11 @@ export function useBrowserViewportResize(options: {
     (next: PreviewViewportSetting) => {
       dragVersionRef.current += 1;
       dragCleanupRef.current?.();
+      if (keyboardTimerRef.current !== null) {
+        clearTimeout(keyboardTimerRef.current);
+        keyboardTimerRef.current = null;
+      }
+      keyboardSizeRef.current = null;
       setDragViewport(null);
       return commitBrowserViewportChange(tabId, next);
     },
@@ -109,10 +117,17 @@ export function useBrowserViewportResize(options: {
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
-    const next = resizeFreeformViewport(effectiveViewport, delta, zoomFactor, direction);
-    if (next.width === effectiveViewport.width && next.height === effectiveViewport.height) return;
+    const base = keyboardSizeRef.current ?? effectiveViewport;
+    const next = resizeFreeformViewport(base, delta, zoomFactor, direction);
+    if (next.width === base.width && next.height === base.height) return;
+    keyboardSizeRef.current = next;
     setDragViewport({ sourceKey: sourceViewportKey, ...next, direction });
-    commitDrag({ _tag: "freeform", ...next });
+    if (keyboardTimerRef.current !== null) clearTimeout(keyboardTimerRef.current);
+    keyboardTimerRef.current = setTimeout(() => {
+      keyboardTimerRef.current = null;
+      keyboardSizeRef.current = null;
+      commitDrag({ _tag: "freeform", ...next });
+    }, 150);
   };
 
   const handleResizePointerDown = (
