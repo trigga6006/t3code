@@ -1,6 +1,8 @@
+import type { PreviewViewportSetting } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
+  BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS,
   commitBrowserViewportChange,
   subscribeBrowserViewportChange,
 } from "./browserViewportActions";
@@ -67,5 +69,38 @@ describe("browserViewportActions", () => {
     await Promise.all([first, second]);
     expect(calls).toEqual([800, 900]);
     unsubscribe();
+  });
+
+  it("releases the per-tab queue when a viewport handler never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const never = new Promise<void>(() => undefined);
+      const handler = vi.fn(async (_setting: PreviewViewportSetting): Promise<void> => undefined);
+      handler.mockImplementationOnce(() => never).mockResolvedValueOnce(undefined);
+      const unsubscribe = subscribeBrowserViewportChange("tab-timeout", handler);
+      const first = commitBrowserViewportChange("tab-timeout", {
+        _tag: "freeform",
+        width: 800,
+        height: 600,
+      });
+      const firstResult = expect(first).rejects.toThrow(
+        "Timed out committing the browser viewport for tab tab-timeout",
+      );
+      const second = commitBrowserViewportChange("tab-timeout", {
+        _tag: "freeform",
+        width: 900,
+        height: 700,
+      });
+
+      await vi.advanceTimersByTimeAsync(BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS);
+      await firstResult;
+      await second;
+
+      expect(handler).toHaveBeenCalledTimes(2);
+      expect(handler.mock.calls[1]?.[0]).toMatchObject({ width: 900, height: 700 });
+      unsubscribe();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

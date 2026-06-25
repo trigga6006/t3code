@@ -21,10 +21,19 @@ import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
-import { applyPreviewServerSnapshot, readThreadPreviewState } from "~/previewStateStore";
+import {
+  applyPreviewServerSnapshot,
+  readThreadPreviewState,
+  reconcilePreviewServerSessions,
+  updatePreviewServerSnapshot,
+} from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
-import { startBrowserRecording, stopBrowserRecording } from "~/browser/browserRecording";
+import {
+  readActiveBrowserRecordingTabId,
+  startBrowserRecording,
+  stopBrowserRecording,
+} from "~/browser/browserRecording";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { isElectron } from "~/env";
 import { useEnvironments } from "~/state/environments";
@@ -42,6 +51,10 @@ import {
 } from "./previewAutomationErrors";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
 import { createPreviewAutomationClientId } from "./previewAutomationClientId";
+import {
+  needsPreviewAutomationSessionSync,
+  resolvePreviewAutomationTarget,
+} from "./previewAutomationTarget";
 
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
@@ -172,8 +185,7 @@ const currentStatus = async (
   requestedTabId: string | null,
 ): Promise<PreviewAutomationStatus> => {
   const state = readThreadPreviewState(threadRef);
-  const tabId = requestedTabId ?? state.snapshot?.tabId ?? null;
-  const snapshot = (tabId ? state.sessions[tabId] : null) ?? state.snapshot;
+  const { snapshot, tabId } = resolvePreviewAutomationTarget(state, requestedTabId);
   const visible = tabId
     ? (useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false)
     : false;
@@ -264,9 +276,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
       let tabId = request.tabId ?? null;
       try {
         let state = readThreadPreviewState(threadRef);
-        const needsSessionSync =
-          Object.keys(state.sessions).length === 0 ||
-          (request.tabId !== undefined && state.sessions[request.tabId] === undefined);
+        const needsSessionSync = needsPreviewAutomationSessionSync(state, request.tabId);
         if (needsSessionSync) {
           const listTarget = {
             environmentId,
@@ -277,9 +287,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
           if (result._tag === "Failure") {
             throw squashAtomCommandFailure(result);
           }
-          for (const snapshot of result.value.sessions) {
-            applyPreviewServerSnapshot(threadRef, snapshot);
-          }
+          reconcilePreviewServerSessions(threadRef, result.value.sessions);
           state = readThreadPreviewState(threadRef);
         }
         tabId = request.tabId ?? state.snapshot?.tabId ?? null;
@@ -335,7 +343,18 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               request.timeoutMs,
             );
             if (reusedExistingTab && input.url && previewBridge) {
-              await previewBridge.navigate(activeTabId, input.url);
+              const resolution = resolveBrowserNavigationTarget(environmentId, {
+                kind: "url",
+                url: input.url,
+              });
+              await previewBridge.navigate(activeTabId, resolution.resolvedUrl);
+              await waitForNavigationReadiness(
+                threadRef,
+                request.requestId,
+                activeTabId,
+                "load",
+                request.timeoutMs,
+              );
             }
             return await currentStatus(threadRef, activeTabId);
           }
@@ -374,7 +393,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             if (result._tag === "Failure") {
               throw squashAtomCommandFailure(result);
             }
-            applyPreviewServerSnapshot(threadRef, result.value);
+            updatePreviewServerSnapshot(threadRef, result.value);
             const viewport = await waitForRenderedViewport(
               ready.tabId,
               setting,
@@ -442,14 +461,14 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             };
           }
           case "recordingStop": {
-            const ready = await requireReadyTab();
-            const artifact = await stopBrowserRecording(ready.tabId);
+            const recordingTabId = readActiveBrowserRecordingTabId();
+            const artifact = recordingTabId ? await stopBrowserRecording(recordingTabId) : null;
             if (!artifact) {
               throw new PreviewAutomationRecordingNotActiveError({
                 requestId: request.requestId,
                 environmentId,
                 threadId: request.threadId,
-                tabId: ready.tabId,
+                tabId: recordingTabId ?? tabId,
               });
             }
             return artifact;

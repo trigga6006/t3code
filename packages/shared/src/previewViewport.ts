@@ -16,56 +16,9 @@ export interface PreviewViewportPreset {
 
 type PreviewViewportPresetDefinition = Omit<PreviewViewportPreset, "id">;
 
+// Keep this in Chrome DevTools' default-device order. Dimensions are CSS
+// viewport sizes from Chromium's EmulatedDevices.ts standard catalog.
 const PREVIEW_VIEWPORT_PRESET_DEFINITIONS = {
-  "desktop-1920x1080": {
-    label: "Desktop Full HD",
-    category: "Desktop",
-    detail: "1920 × 1080",
-    width: 1920,
-    height: 1080,
-  },
-  "desktop-1440x900": {
-    label: "Desktop",
-    category: "Desktop",
-    detail: "1440 × 900",
-    width: 1440,
-    height: 900,
-  },
-  "laptop-1366x768": {
-    label: "Laptop HD",
-    category: "Desktop",
-    detail: "1366 × 768",
-    width: 1366,
-    height: 768,
-  },
-  "laptop-1280x800": {
-    label: "Laptop",
-    category: "Desktop",
-    detail: "1280 × 800",
-    width: 1280,
-    height: 800,
-  },
-  "ipad-pro-11": {
-    label: 'iPad Pro 11"',
-    category: "Tablet",
-    detail: "834 × 1194",
-    width: 834,
-    height: 1194,
-  },
-  "ipad-mini": {
-    label: "iPad mini",
-    category: "Tablet",
-    detail: "744 × 1133",
-    width: 744,
-    height: 1133,
-  },
-  "iphone-15-pro": {
-    label: "iPhone 15 Pro",
-    category: "Phone",
-    detail: "393 × 852",
-    width: 393,
-    height: 852,
-  },
   "iphone-se": {
     label: "iPhone SE",
     category: "Phone",
@@ -73,19 +26,117 @@ const PREVIEW_VIEWPORT_PRESET_DEFINITIONS = {
     width: 375,
     height: 667,
   },
-  "pixel-8": {
-    label: "Pixel 8",
+  "iphone-xr": {
+    label: "iPhone XR",
+    category: "Phone",
+    detail: "414 × 896",
+    width: 414,
+    height: 896,
+  },
+  "iphone-12-pro": {
+    label: "iPhone 12 Pro",
+    category: "Phone",
+    detail: "390 × 844",
+    width: 390,
+    height: 844,
+  },
+  "iphone-14-pro-max": {
+    label: "iPhone 14 Pro Max",
+    category: "Phone",
+    detail: "430 × 932",
+    width: 430,
+    height: 932,
+  },
+  "pixel-7": {
+    label: "Pixel 7",
     category: "Phone",
     detail: "412 × 915",
     width: 412,
     height: 915,
   },
-  "galaxy-s24": {
-    label: "Galaxy S24",
+  "samsung-galaxy-s8-plus": {
+    label: "Samsung Galaxy S8+",
     category: "Phone",
-    detail: "360 × 780",
+    detail: "360 × 740",
     width: 360,
-    height: 780,
+    height: 740,
+  },
+  "samsung-galaxy-s20-ultra": {
+    label: "Samsung Galaxy S20 Ultra",
+    category: "Phone",
+    detail: "412 × 915",
+    width: 412,
+    height: 915,
+  },
+  "ipad-mini": {
+    label: "iPad Mini",
+    category: "Tablet",
+    detail: "768 × 1024",
+    width: 768,
+    height: 1024,
+  },
+  "ipad-air": {
+    label: "iPad Air",
+    category: "Tablet",
+    detail: "820 × 1180",
+    width: 820,
+    height: 1180,
+  },
+  "ipad-pro": {
+    label: "iPad Pro",
+    category: "Tablet",
+    detail: "1024 × 1366",
+    width: 1024,
+    height: 1366,
+  },
+  "surface-pro-7": {
+    label: "Surface Pro 7",
+    category: "Tablet",
+    detail: "912 × 1368",
+    width: 912,
+    height: 1368,
+  },
+  "surface-duo": {
+    label: "Surface Duo",
+    category: "Phone",
+    detail: "540 × 720",
+    width: 540,
+    height: 720,
+  },
+  "galaxy-z-fold-5": {
+    label: "Galaxy Z Fold 5",
+    category: "Phone",
+    detail: "344 × 882",
+    width: 344,
+    height: 882,
+  },
+  "asus-zenbook-fold": {
+    label: "Asus Zenbook Fold",
+    category: "Tablet",
+    detail: "853 × 1280",
+    width: 853,
+    height: 1280,
+  },
+  "samsung-galaxy-a51-71": {
+    label: "Samsung Galaxy A51/71",
+    category: "Phone",
+    detail: "412 × 914",
+    width: 412,
+    height: 914,
+  },
+  "nest-hub": {
+    label: "Nest Hub",
+    category: "Tablet",
+    detail: "1024 × 600",
+    width: 1024,
+    height: 600,
+  },
+  "nest-hub-max": {
+    label: "Nest Hub Max",
+    category: "Tablet",
+    detail: "1280 × 800",
+    width: 1280,
+    height: 800,
   },
 } as const satisfies Record<PreviewViewportPresetId, PreviewViewportPresetDefinition>;
 

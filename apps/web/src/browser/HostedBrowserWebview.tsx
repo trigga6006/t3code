@@ -44,6 +44,7 @@ export function HostedBrowserWebview(props: {
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
+  const [lockedAspectRatio, setLockedAspectRatio] = useState<number | null>(null);
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
       const current = state.byTabId[tabId];
@@ -108,6 +109,8 @@ export function HostedBrowserWebview(props: {
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  const viewportWidth = viewport._tag === "fill" ? null : viewport.width;
+  const viewportHeight = viewport._tag === "fill" ? null : viewport.height;
   const hiddenSize =
     viewport._tag !== "fill"
       ? {
@@ -130,6 +133,7 @@ export function HostedBrowserWebview(props: {
     zoomFactor,
     containerSize,
     deviceToolbarVisible,
+    aspectRatio: lockedAspectRatio,
   });
 
   const syncContentPresentation = useCallback(() => {
@@ -140,6 +144,7 @@ export function HostedBrowserWebview(props: {
       y: layout.viewportY,
       width: layout.viewportWidth,
       height: layout.viewportHeight,
+      scale: layout.viewportScale,
       scrollLeft: wrapper.scrollLeft,
       scrollTop: wrapper.scrollTop,
     });
@@ -154,7 +159,7 @@ export function HostedBrowserWebview(props: {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
     wrapper.scrollTo({ left: 0, top: 0 });
-  }, [tabId, viewport]);
+  }, [tabId, viewport._tag, viewportHeight, viewportWidth]);
 
   if (!config) return null;
 
@@ -180,10 +185,7 @@ export function HostedBrowserWebview(props: {
   return (
     <div
       ref={wrapperRef}
-      className={cn(
-        "fixed bg-muted/35",
-        active && !layout.fillsPanel ? "overflow-auto" : "overflow-hidden",
-      )}
+      className="fixed overflow-hidden bg-muted/35"
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
       data-preview-viewport={tabId}
@@ -193,6 +195,8 @@ export function HostedBrowserWebview(props: {
           <BrowserDeviceToolbar
             setting={effectiveViewport}
             width={Math.max(1, Math.round(containerSize.width))}
+            aspectRatio={lockedAspectRatio}
+            onAspectRatioChange={setLockedAspectRatio}
             onChange={commitViewportChange}
           />
         ) : null}
@@ -222,8 +226,10 @@ export function HostedBrowserWebview(props: {
           style={{
             left: layout.viewportX,
             top: layout.viewportY,
-            width: layout.viewportWidth,
-            height: layout.viewportHeight,
+            width: layout.viewportWidth / layout.viewportScale,
+            height: layout.viewportHeight / layout.viewportScale,
+            transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
+            transformOrigin: "top left",
           }}
         />
         {active && effectiveViewport._tag !== "fill" ? (

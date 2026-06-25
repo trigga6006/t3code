@@ -17,6 +17,7 @@ describe("resolveBrowserViewportLayout", () => {
       viewportY: 0,
       viewportWidth: 700,
       viewportHeight: 500,
+      viewportScale: 1,
       fillsPanel: true,
     });
   });
@@ -37,20 +38,20 @@ describe("resolveBrowserViewportLayout", () => {
     });
   });
 
-  it("creates a scrollable canvas for a larger fixed viewport", () => {
-    expect(
-      resolveBrowserViewportLayout(
-        { width: 600, height: 700 },
-        { _tag: "freeform", width: 1440, height: 900 },
-      ),
-    ).toMatchObject({
-      canvasWidth: 1440,
-      canvasHeight: 900,
+  it("scales a larger fixed viewport down to fit without creating overflow", () => {
+    const layout = resolveBrowserViewportLayout(
+      { width: 600, height: 700 },
+      { _tag: "freeform", width: 1440, height: 900 },
+    );
+    expect(layout).toMatchObject({
+      canvasWidth: 600,
+      canvasHeight: 700,
       viewportX: 0,
-      viewportY: 0,
-      viewportWidth: 1440,
-      viewportHeight: 900,
+      viewportY: 163,
+      viewportWidth: 600,
+      viewportHeight: 375,
     });
+    expect(layout.viewportScale).toBeCloseTo(5 / 12);
   });
 
   it("keeps fixed dimensions in page CSS pixels when browser zoom changes", () => {
@@ -93,31 +94,41 @@ describe("resolveBrowserViewportLayout", () => {
     ).toEqual({ width: 900, height: 650 });
   });
 
+  it("preserves a locked aspect ratio from either axis", () => {
+    expect(
+      resizeFreeformViewport({ width: 800, height: 600 }, { x: 200, y: 0 }, 1, "east", 4 / 3),
+    ).toEqual({ width: 1000, height: 750 });
+    expect(
+      resizeFreeformViewport({ width: 800, height: 600 }, { x: 0, y: 150 }, 1, "south", 4 / 3),
+    ).toEqual({ width: 1000, height: 750 });
+  });
+
   it("reserves persistent device-toolbar rails around the guest viewport", () => {
     expect(
       resolveBrowserDeviceViewportLayout(
         { width: 1200, height: 900 },
-        { _tag: "freeform", width: 1120, height: 818 },
+        { _tag: "freeform", width: 1180, height: 858 },
       ),
     ).toEqual({
       canvasWidth: 1200,
       canvasHeight: 900,
-      viewportX: 40,
-      viewportY: 42,
-      viewportWidth: 1120,
-      viewportHeight: 818,
+      viewportX: 10,
+      viewportY: 32,
+      viewportWidth: 1180,
+      viewportHeight: 858,
+      viewportScale: 1,
       fillsPanel: false,
     });
   });
 
   it("captures the available framed area when responsive mode is enabled", () => {
     expect(resolveResponsiveBrowserViewportSize({ width: 1200, height: 900 })).toEqual({
-      width: 1120,
-      height: 818,
+      width: 1180,
+      height: 858,
     });
     expect(resolveResponsiveBrowserViewportSize({ width: 1200, height: 900 }, 2)).toEqual({
-      width: 560,
-      height: 409,
+      width: 590,
+      height: 429,
     });
   });
 

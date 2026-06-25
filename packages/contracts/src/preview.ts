@@ -52,20 +52,48 @@ export const PreviewRenderedViewportSize = Schema.Struct({
 export type PreviewRenderedViewportSize = typeof PreviewRenderedViewportSize.Type;
 
 export const PREVIEW_VIEWPORT_PRESET_IDS = [
+  "iphone-se",
+  "iphone-xr",
+  "iphone-12-pro",
+  "iphone-14-pro-max",
+  "pixel-7",
+  "samsung-galaxy-s8-plus",
+  "samsung-galaxy-s20-ultra",
+  "ipad-mini",
+  "ipad-air",
+  "ipad-pro",
+  "surface-pro-7",
+  "surface-duo",
+  "galaxy-z-fold-5",
+  "asus-zenbook-fold",
+  "samsung-galaxy-a51-71",
+  "nest-hub",
+  "nest-hub-max",
+] as const;
+
+export const PreviewViewportPresetId = Schema.Literals(PREVIEW_VIEWPORT_PRESET_IDS);
+export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type;
+
+/**
+ * Preset IDs shipped before the Chrome-compatible catalog. Existing sessions
+ * can still reconnect with these values, but new resize requests only expose
+ * PREVIEW_VIEWPORT_PRESET_IDS.
+ */
+const LEGACY_PREVIEW_VIEWPORT_PRESET_IDS = [
   "desktop-1920x1080",
   "desktop-1440x900",
   "laptop-1366x768",
   "laptop-1280x800",
   "ipad-pro-11",
-  "ipad-mini",
   "iphone-15-pro",
-  "iphone-se",
   "pixel-8",
   "galaxy-s24",
 ] as const;
 
-export const PreviewViewportPresetId = Schema.Literals(PREVIEW_VIEWPORT_PRESET_IDS);
-export type PreviewViewportPresetId = typeof PreviewViewportPresetId.Type;
+const StoredPreviewViewportPresetId = Schema.Literals([
+  ...PREVIEW_VIEWPORT_PRESET_IDS,
+  ...LEGACY_PREVIEW_VIEWPORT_PRESET_IDS,
+]);
 
 export const PreviewViewportSetting = Schema.Union([
   Schema.TaggedStruct("fill", {}),
@@ -74,7 +102,7 @@ export const PreviewViewportSetting = Schema.Union([
   }).check(viewportAreaFilter),
   Schema.TaggedStruct("preset", {
     ...PreviewViewportSize.fields,
-    presetId: PreviewViewportPresetId,
+    presetId: StoredPreviewViewportPresetId,
   }).check(viewportAreaFilter),
 ]);
 export type PreviewViewportSetting = typeof PreviewViewportSetting.Type;

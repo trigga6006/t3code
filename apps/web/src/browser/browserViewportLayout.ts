@@ -11,13 +11,16 @@ export interface BrowserViewportLayout {
   readonly canvasHeight: number;
   readonly viewportX: number;
   readonly viewportY: number;
+  /** Visible footprint inside the preview panel after fit-to-panel scaling. */
   readonly viewportWidth: number;
   readonly viewportHeight: number;
+  /** Presentation-only scale; the guest keeps its requested CSS viewport. */
+  readonly viewportScale: number;
   readonly fillsPanel: boolean;
 }
 
-export const BROWSER_DEVICE_TOOLBAR_HEIGHT = 42;
-export const BROWSER_VIEWPORT_RESIZE_RAIL_SIZE = 40;
+export const BROWSER_DEVICE_TOOLBAR_HEIGHT = 32;
+export const BROWSER_VIEWPORT_RESIZE_RAIL_SIZE = 10;
 
 export type BrowserViewportResizeDirection =
   | "north"
@@ -60,19 +63,28 @@ export function resolveBrowserViewportLayout(
       viewportY: 0,
       viewportWidth: containerWidth,
       viewportHeight: containerHeight,
+      viewportScale: 1,
       fillsPanel: true,
     };
   }
   const normalizedZoomFactor = normalizeZoomFactor(zoomFactor);
   const renderedWidth = setting.width * normalizedZoomFactor;
   const renderedHeight = setting.height * normalizedZoomFactor;
+  const viewportScale = Math.min(
+    1,
+    containerWidth / renderedWidth,
+    containerHeight / renderedHeight,
+  );
+  const viewportWidth = renderedWidth * viewportScale;
+  const viewportHeight = renderedHeight * viewportScale;
   return {
-    canvasWidth: Math.max(containerWidth, renderedWidth),
-    canvasHeight: Math.max(containerHeight, renderedHeight),
-    viewportX: Math.max(0, Math.round((containerWidth - renderedWidth) / 2)),
-    viewportY: Math.max(0, Math.round((containerHeight - renderedHeight) / 2)),
-    viewportWidth: renderedWidth,
-    viewportHeight: renderedHeight,
+    canvasWidth: containerWidth,
+    canvasHeight: containerHeight,
+    viewportX: Math.max(0, Math.round((containerWidth - viewportWidth) / 2)),
+    viewportY: Math.max(0, Math.round((containerHeight - viewportHeight) / 2)),
+    viewportWidth,
+    viewportHeight,
+    viewportScale,
     fillsPanel: false,
   };
 }
@@ -89,9 +101,8 @@ export function resolveBrowserDeviceViewportLayout(
   );
   return {
     ...layout,
-    canvasWidth: layout.canvasWidth + BROWSER_VIEWPORT_RESIZE_RAIL_SIZE * 2,
-    canvasHeight:
-      layout.canvasHeight + BROWSER_DEVICE_TOOLBAR_HEIGHT + BROWSER_VIEWPORT_RESIZE_RAIL_SIZE,
+    canvasWidth: Math.max(1, Math.round(container.width)),
+    canvasHeight: Math.max(1, Math.round(container.height)),
     viewportX: layout.viewportX + BROWSER_VIEWPORT_RESIZE_RAIL_SIZE,
     viewportY: layout.viewportY + BROWSER_DEVICE_TOOLBAR_HEIGHT,
   };
@@ -100,11 +111,59 @@ export function resolveBrowserDeviceViewportLayout(
 const clampViewportDimension = (value: number): number =>
   Math.min(PREVIEW_VIEWPORT_MAX_DIMENSION, Math.max(PREVIEW_VIEWPORT_MIN_DIMENSION, value));
 
+const validAspectRatio = (aspectRatio: number | undefined): aspectRatio is number =>
+  aspectRatio !== undefined && Number.isFinite(aspectRatio) && aspectRatio > 0;
+
+function resizeAtAspectRatio(
+  desired: number,
+  aspectRatio: number,
+  primaryAxis: "width" | "height",
+): PreviewViewportSize {
+  if (primaryAxis === "width") {
+    const minimum = Math.ceil(
+      Math.max(PREVIEW_VIEWPORT_MIN_DIMENSION, PREVIEW_VIEWPORT_MIN_DIMENSION * aspectRatio),
+    );
+    const maximum = Math.floor(
+      Math.min(
+        PREVIEW_VIEWPORT_MAX_DIMENSION,
+        PREVIEW_VIEWPORT_MAX_DIMENSION * aspectRatio,
+        Math.sqrt(PREVIEW_VIEWPORT_MAX_AREA * aspectRatio),
+      ),
+    );
+    let width = Math.min(maximum, Math.max(minimum, Math.round(desired)));
+    let height = Math.round(width / aspectRatio);
+    while (width * height > PREVIEW_VIEWPORT_MAX_AREA && width > minimum) {
+      width -= 1;
+      height = Math.round(width / aspectRatio);
+    }
+    return { width, height };
+  }
+
+  const minimum = Math.ceil(
+    Math.max(PREVIEW_VIEWPORT_MIN_DIMENSION, PREVIEW_VIEWPORT_MIN_DIMENSION / aspectRatio),
+  );
+  const maximum = Math.floor(
+    Math.min(
+      PREVIEW_VIEWPORT_MAX_DIMENSION,
+      PREVIEW_VIEWPORT_MAX_DIMENSION / aspectRatio,
+      Math.sqrt(PREVIEW_VIEWPORT_MAX_AREA / aspectRatio),
+    ),
+  );
+  let height = Math.min(maximum, Math.max(minimum, Math.round(desired)));
+  let width = Math.round(height * aspectRatio);
+  while (width * height > PREVIEW_VIEWPORT_MAX_AREA && height > minimum) {
+    height -= 1;
+    width = Math.round(height * aspectRatio);
+  }
+  return { width, height };
+}
+
 export function resizeFreeformViewport(
   start: PreviewViewportSize,
   delta: { readonly x: number; readonly y: number },
   zoomFactor = 1,
   direction: BrowserViewportResizeDirection = "southeast",
+  aspectRatio?: number,
 ): PreviewViewportSize {
   const normalizedZoomFactor = normalizeZoomFactor(zoomFactor);
   const horizontalDelta = direction.includes("east")
@@ -117,12 +176,28 @@ export function resizeFreeformViewport(
     : direction.includes("north")
       ? -delta.y
       : 0;
-  let width = clampViewportDimension(
-    Math.round(start.width + horizontalDelta / normalizedZoomFactor),
-  );
-  let height = clampViewportDimension(
-    Math.round(start.height + verticalDelta / normalizedZoomFactor),
-  );
+  const desiredWidth = start.width + horizontalDelta / normalizedZoomFactor;
+  const desiredHeight = start.height + verticalDelta / normalizedZoomFactor;
+  if (validAspectRatio(aspectRatio)) {
+    const controlsWidth = horizontalDelta !== 0 || direction === "east" || direction === "west";
+    const controlsHeight = verticalDelta !== 0 || direction === "north" || direction === "south";
+    const primaryAxis =
+      controlsWidth && !controlsHeight
+        ? "width"
+        : controlsHeight && !controlsWidth
+          ? "height"
+          : Math.abs(desiredWidth - start.width) / start.width >=
+              Math.abs(desiredHeight - start.height) / start.height
+            ? "width"
+            : "height";
+    return resizeAtAspectRatio(
+      primaryAxis === "width" ? desiredWidth : desiredHeight,
+      aspectRatio,
+      primaryAxis,
+    );
+  }
+  let width = clampViewportDimension(Math.round(desiredWidth));
+  let height = clampViewportDimension(Math.round(desiredHeight));
   if (width * height <= PREVIEW_VIEWPORT_MAX_AREA) return { width, height };
   if (Math.abs(horizontalDelta) >= Math.abs(verticalDelta)) {
     width = Math.max(
@@ -161,6 +236,7 @@ export function resizeBrowserViewportFromRail(
   available: PreviewViewportSize,
   zoomFactor = 1,
   direction: BrowserViewportResizeDirection = "southeast",
+  aspectRatio?: number,
 ): PreviewViewportSize {
   const normalizedZoomFactor = normalizeZoomFactor(zoomFactor);
   const startWidth = start.width * normalizedZoomFactor;
@@ -185,6 +261,7 @@ export function resizeBrowserViewportFromRail(
     },
     normalizedZoomFactor,
     direction,
+    aspectRatio,
   );
 }
 

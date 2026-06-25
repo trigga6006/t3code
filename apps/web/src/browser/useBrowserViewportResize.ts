@@ -25,6 +25,8 @@ interface ViewportDrag extends PreviewViewportSize {
   readonly direction: BrowserViewportResizeDirection;
 }
 
+const KEYBOARD_RESIZE_COMMIT_DELAY_MS = 150;
+
 const viewportSettingKey = (viewport: PreviewViewportSetting): string =>
   viewport._tag === "fill"
     ? "fill"
@@ -36,10 +38,13 @@ export function useBrowserViewportResize(options: {
   readonly zoomFactor: number;
   readonly containerSize: PreviewViewportSize;
   readonly deviceToolbarVisible: boolean;
+  readonly aspectRatio: number | null;
 }) {
-  const { tabId, viewport, zoomFactor, containerSize, deviceToolbarVisible } = options;
+  const { tabId, viewport, zoomFactor, containerSize, deviceToolbarVisible, aspectRatio } = options;
   const dragCleanupRef = useRef<(() => void) | null>(null);
   const dragVersionRef = useRef(0);
+  const keyboardCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const keyboardViewportRef = useRef<ViewportDrag | null>(null);
   const [dragViewport, setDragViewport] = useState<ViewportDrag | null>(null);
   const sourceViewportKey = viewportSettingKey(viewport);
   const sourceViewportKeyRef = useRef(sourceViewportKey);
@@ -65,14 +70,34 @@ export function useBrowserViewportResize(options: {
     () => () => {
       dragVersionRef.current += 1;
       dragCleanupRef.current?.();
+      if (keyboardCommitTimerRef.current !== null) {
+        clearTimeout(keyboardCommitTimerRef.current);
+      }
+      keyboardCommitTimerRef.current = null;
+      keyboardViewportRef.current = null;
     },
     [],
   );
+
+  useEffect(() => {
+    const pending = keyboardViewportRef.current;
+    if (!pending || pending.sourceKey === sourceViewportKey) return;
+    if (keyboardCommitTimerRef.current !== null) {
+      clearTimeout(keyboardCommitTimerRef.current);
+      keyboardCommitTimerRef.current = null;
+    }
+    keyboardViewportRef.current = null;
+  }, [sourceViewportKey]);
 
   const commitViewportChange = useCallback(
     (next: PreviewViewportSetting) => {
       dragVersionRef.current += 1;
       dragCleanupRef.current?.();
+      if (keyboardCommitTimerRef.current !== null) {
+        clearTimeout(keyboardCommitTimerRef.current);
+        keyboardCommitTimerRef.current = null;
+      }
+      keyboardViewportRef.current = null;
       setDragViewport(null);
       return commitBrowserViewportChange(tabId, next);
     },
@@ -109,10 +134,29 @@ export function useBrowserViewportResize(options: {
     if (!delta) return;
     event.preventDefault();
     event.stopPropagation();
-    const next = resizeFreeformViewport(effectiveViewport, delta, zoomFactor, direction);
-    if (next.width === effectiveViewport.width && next.height === effectiveViewport.height) return;
-    setDragViewport({ sourceKey: sourceViewportKey, ...next, direction });
-    commitDrag({ _tag: "freeform", ...next });
+    const pending = keyboardViewportRef.current;
+    const base = pending?.sourceKey === sourceViewportKey ? pending : effectiveViewport;
+    const next = resizeFreeformViewport(
+      base,
+      delta,
+      zoomFactor,
+      direction,
+      aspectRatio ?? undefined,
+    );
+    if (next.width === base.width && next.height === base.height) return;
+    const keyboardViewport = { sourceKey: sourceViewportKey, ...next, direction };
+    keyboardViewportRef.current = keyboardViewport;
+    setDragViewport(keyboardViewport);
+    if (keyboardCommitTimerRef.current !== null) {
+      clearTimeout(keyboardCommitTimerRef.current);
+    }
+    keyboardCommitTimerRef.current = setTimeout(() => {
+      keyboardCommitTimerRef.current = null;
+      const latest = keyboardViewportRef.current;
+      if (!latest || latest.sourceKey !== sourceViewportKeyRef.current) return;
+      keyboardViewportRef.current = null;
+      commitDrag({ _tag: "freeform", width: latest.width, height: latest.height });
+    }, KEYBOARD_RESIZE_COMMIT_DELAY_MS);
   };
 
   const handleResizePointerDown = (
@@ -122,6 +166,11 @@ export function useBrowserViewportResize(options: {
     if (effectiveViewport._tag === "fill") return;
     event.preventDefault();
     event.stopPropagation();
+    if (keyboardCommitTimerRef.current !== null) {
+      clearTimeout(keyboardCommitTimerRef.current);
+      keyboardCommitTimerRef.current = null;
+    }
+    keyboardViewportRef.current = null;
     dragCleanupRef.current?.();
     dragVersionRef.current += 1;
     const pointerId = event.pointerId;
@@ -130,6 +179,7 @@ export function useBrowserViewportResize(options: {
     const startY = event.clientY;
     const startWidth = effectiveViewport.width;
     const startHeight = effectiveViewport.height;
+    const dragZoomFactor = normalizedZoomFactor * layout.viewportScale;
     let latest = { width: startWidth, height: startHeight };
     setDragViewport({
       sourceKey: sourceViewportKey,
@@ -160,8 +210,9 @@ export function useBrowserViewportResize(options: {
           y: moveEvent.clientY - startY,
         },
         viewportContainerSize,
-        zoomFactor,
+        dragZoomFactor,
         direction,
+        aspectRatio ?? undefined,
       );
       latest = { width, height };
       setDragViewport({ sourceKey: sourceViewportKey, width, height, direction });

@@ -108,8 +108,9 @@ describe("PreviewAutomationResizeInput", () => {
   it("requires fields that match the selected mode", () => {
     expect(decodeResizeInput({ mode: "fill" })).toEqual({ mode: "fill" });
     expect(
-      decodeResizeInput({ mode: "preset", preset: "pixel-8", orientation: "landscape" }),
-    ).toMatchObject({ mode: "preset", preset: "pixel-8" });
+      decodeResizeInput({ mode: "preset", preset: "pixel-7", orientation: "landscape" }),
+    ).toMatchObject({ mode: "preset", preset: "pixel-7" });
+    expect(() => decodeResizeInput({ mode: "preset", preset: "pixel-8" })).toThrow();
     expect(() => decodeResizeInput({ mode: "freeform", width: 1024 })).toThrow();
     expect(() => decodeResizeInput({ mode: "fill", width: 1024, height: 768 })).toThrow();
   });

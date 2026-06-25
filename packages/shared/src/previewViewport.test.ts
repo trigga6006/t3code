@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  PREVIEW_VIEWPORT_PRESETS,
   previewViewportLabel,
   previewViewportPresetOrientation,
   resolvePreviewViewport,
@@ -17,24 +18,46 @@ describe("previewViewport", () => {
   });
 
   it("resolves device presets in either orientation", () => {
-    expect(resolvePreviewViewport({ mode: "preset", preset: "iphone-15-pro" })).toEqual({
+    expect(resolvePreviewViewport({ mode: "preset", preset: "iphone-12-pro" })).toEqual({
       _tag: "preset",
-      width: 393,
-      height: 852,
-      presetId: "iphone-15-pro",
+      width: 390,
+      height: 844,
+      presetId: "iphone-12-pro",
     });
     expect(
       resolvePreviewViewport({
         mode: "preset",
-        preset: "iphone-15-pro",
+        preset: "iphone-12-pro",
         orientation: "landscape",
       }),
     ).toEqual({
       _tag: "preset",
-      width: 852,
-      height: 393,
-      presetId: "iphone-15-pro",
+      width: 844,
+      height: 390,
+      presetId: "iphone-12-pro",
     });
+  });
+
+  it("matches Chrome's standard device catalog ordering", () => {
+    expect(PREVIEW_VIEWPORT_PRESETS.map((preset) => preset.label)).toEqual([
+      "iPhone SE",
+      "iPhone XR",
+      "iPhone 12 Pro",
+      "iPhone 14 Pro Max",
+      "Pixel 7",
+      "Samsung Galaxy S8+",
+      "Samsung Galaxy S20 Ultra",
+      "iPad Mini",
+      "iPad Air",
+      "iPad Pro",
+      "Surface Pro 7",
+      "Surface Duo",
+      "Galaxy Z Fold 5",
+      "Asus Zenbook Fold",
+      "Samsung Galaxy A51/71",
+      "Nest Hub",
+      "Nest Hub Max",
+    ]);
   });
 
   it("formats settings for compact UI", () => {

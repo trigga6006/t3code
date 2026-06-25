@@ -2,8 +2,35 @@ import type { PreviewViewportSetting } from "@t3tools/contracts";
 
 type BrowserViewportHandler = (setting: PreviewViewportSetting) => Promise<void>;
 
+export const BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS = 15_000;
+
+export class BrowserViewportCommitTimeoutError extends Error {
+  override readonly name = "BrowserViewportCommitTimeoutError";
+
+  constructor(readonly tabId: string) {
+    super(`Timed out committing the browser viewport for tab ${tabId}`);
+  }
+}
+
 const handlers = new Map<string, BrowserViewportHandler>();
 const commitTails = new Map<string, Promise<void>>();
+
+const runHandlerWithTimeout = (
+  tabId: string,
+  handler: BrowserViewportHandler,
+  setting: PreviewViewportSetting,
+): Promise<void> => {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new BrowserViewportCommitTimeoutError(tabId)),
+      BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([Promise.resolve().then(() => handler(setting)), timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+};
 
 export function subscribeBrowserViewportChange(
   tabId: string,
@@ -25,7 +52,7 @@ export function commitBrowserViewportChange(
     .then(() => {
       const handler = handlers.get(tabId);
       return handler
-        ? handler(setting)
+        ? runHandlerWithTimeout(tabId, handler, setting)
         : Promise.reject(new Error(`No visible browser viewport handler for tab ${tabId}`));
     });
   commitTails.set(tabId, commit);

@@ -74,7 +74,7 @@ export const PreviewNavigateTool = safeBrowserTool(
 export const PreviewResizeTool = safeBrowserTool(
   Tool.make("preview_resize", {
     description:
-      "Set the active collaborative browser tab to fill-panel sizing, an independently resizable freeform size, or a common device preset. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-15-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
+      "Set the active collaborative browser tab to fill-panel sizing, an independently resizable freeform size, or a Chrome-standard device preset. Use {mode:'fill'}, {mode:'freeform',width:1024,height:768}, or {mode:'preset',preset:'iphone-12-pro',orientation:'portrait'}. This changes CSS layout breakpoints without changing the desktop browser user agent.",
     parameters: PreviewAutomationResizeInput,
     success: PreviewAutomationResizeResult,
     failure: PreviewAutomationError,

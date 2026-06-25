@@ -9,7 +9,10 @@ import {
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { PreviewAutomationTargetUnavailableError } from "./previewAutomationErrors";
+import {
+  PreviewAutomationRecordingNotActiveError,
+  PreviewAutomationTargetUnavailableError,
+} from "./previewAutomationErrors";
 import {
   createPreviewAutomationRequestConsumerAtom,
   serializePreviewAutomationError,
@@ -239,6 +242,28 @@ describe("previewAutomationRequestConsumer", () => {
         tabId: "tab-1",
         bridgeAvailable: false,
       },
+    });
+  });
+
+  it("reports a missing recording even when no preview tab remains", () => {
+    const error = new PreviewAutomationRecordingNotActiveError({
+      requestId: "request-recording-stop",
+      environmentId,
+      threadId,
+      tabId: null,
+    });
+
+    expect(
+      serializePreviewAutomationError(error, {
+        requestId: "request-recording-stop",
+        operation: "recordingStop",
+        environmentId,
+        threadId,
+        tabId: null,
+      }),
+    ).toMatchObject({
+      _tag: "PreviewAutomationExecutionError",
+      detail: { tabId: null },
     });
   });
 

@@ -9,6 +9,14 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
+export const previewAutomationHostFocusConcurrencyKey = (value: {
+  readonly environmentId: string;
+  readonly input: {
+    readonly clientId: string;
+    readonly connectionId: string;
+  };
+}): string => JSON.stringify([value.environmentId, value.input.clientId, value.input.connectionId]);
+
 export function createPreviewEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -98,7 +106,7 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: automationScheduler,
       concurrency: {
         mode: "latest",
-        key: ({ environmentId, input }) => JSON.stringify([environmentId, input.clientId]),
+        key: previewAutomationHostFocusConcurrencyKey,
       },
     }),
   };

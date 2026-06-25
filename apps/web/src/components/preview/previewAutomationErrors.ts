@@ -82,7 +82,7 @@ export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedError
     requestId: TrimmedNonEmptyString,
     environmentId: EnvironmentId,
     threadId: ThreadId,
-    tabId: PreviewTabId,
+    tabId: Schema.NullOr(PreviewTabId),
   },
 ) {
   get responseTag() {
@@ -90,7 +90,7 @@ export class PreviewAutomationRecordingNotActiveError extends Schema.TaggedError
   }
 
   override get message(): string {
-    return `Preview automation request ${this.requestId} found no active recording for tab ${this.tabId} on environment ${this.environmentId} thread ${this.threadId}.`;
+    return `Preview automation request ${this.requestId} found no active recording for tab ${this.tabId ?? "unassigned"} on environment ${this.environmentId} thread ${this.threadId}.`;
   }
 }
 

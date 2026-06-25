@@ -90,6 +90,10 @@ export function useActiveBrowserRecordingTabId(): string | null {
 let active: ActiveRecording | null = null;
 let unsubscribeFrames: (() => void) | null = null;
 
+export function readActiveBrowserRecordingTabId(): string | null {
+  return active?.tabId ?? null;
+}
+
 const preferredMimeType = (): string => {
   const candidates = ["video/mp4;codecs=avc1.42E01E", "video/webm;codecs=vp9", "video/webm"];
   return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? "video/webm";

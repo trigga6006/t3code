@@ -10,6 +10,7 @@ describe("browserSurfaceStore", () => {
       y: 0,
       width: 393,
       height: 852,
+      scale: 1,
       scrollLeft: 0,
       scrollTop: 0,
     });

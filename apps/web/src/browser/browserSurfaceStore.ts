@@ -19,6 +19,7 @@ export interface BrowserSurfaceContentPresentation {
   readonly y: number;
   readonly width: number;
   readonly height: number;
+  readonly scale: number;
   readonly scrollLeft: number;
   readonly scrollTop: number;
 }
@@ -73,6 +74,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
         previous.y === content.y &&
         previous.width === content.width &&
         previous.height === content.height &&
+        previous.scale === content.scale &&
         previous.scrollLeft === content.scrollLeft &&
         previous.scrollTop === content.scrollTop
       ) {

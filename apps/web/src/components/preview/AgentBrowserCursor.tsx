@@ -38,6 +38,7 @@ function AgentBrowserCursorEvent(props: {
   readonly content: {
     readonly x: number;
     readonly y: number;
+    readonly scale: number;
     readonly scrollLeft: number;
     readonly scrollTop: number;
   } | null;
@@ -57,7 +58,7 @@ function AgentBrowserCursorEvent(props: {
       className="pointer-events-none absolute left-0 top-0 z-40 transition-[transform,opacity] duration-150 ease-out motion-reduce:transition-none"
       style={{
         opacity: agentBrowserCursorOpacity(active, controller),
-        transform: `translate3d(${event.x * zoomFactor + (content?.x ?? 0) - (content?.scrollLeft ?? 0)}px, ${event.y * zoomFactor + (content?.y ?? 0) - (content?.scrollTop ?? 0)}px, 0)`,
+        transform: `translate3d(${event.x * zoomFactor * (content?.scale ?? 1) + (content?.x ?? 0) - (content?.scrollLeft ?? 0)}px, ${event.y * zoomFactor * (content?.scale ?? 1) + (content?.y ?? 0) - (content?.scrollTop ?? 0)}px, 0)`,
       }}
       aria-hidden="true"
       data-agent-browser-cursor
