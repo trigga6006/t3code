@@ -114,7 +114,8 @@ function resolveKeyDefinition(input: PreviewAutomationPressInput): KeyDefinition
     (definition) => definition.key === input.key || definition.shiftedKey === input.key,
   );
   if (printable) {
-    const shifted = input.modifiers?.includes("Shift") ?? false;
+    const hasNonShiftModifier = input.modifiers?.some((m) => m !== "Shift") ?? false;
+    const shifted = !hasNonShiftModifier && (input.modifiers?.includes("Shift") ?? false);
     const key =
       printable.shiftedKey && (shifted || input.key === printable.shiftedKey)
         ? printable.shiftedKey
