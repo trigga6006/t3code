@@ -393,9 +393,9 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
                 )
                 .sort(
                   (left, right) =>
-                    right.supportedOperations.size - left.supportedOperations.size ||
                     Number(right.focused) - Number(left.focused) ||
-                    right.focusOrder - left.focusOrder,
+                    right.focusOrder - left.focusOrder ||
+                    right.supportedOperations.size - left.supportedOperations.size,
                 )[0];
       if (!connection) {
         if (!hasLiveAssignment) assignments.delete(assignmentKey);

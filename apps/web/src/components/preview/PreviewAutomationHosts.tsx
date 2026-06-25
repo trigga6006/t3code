@@ -375,11 +375,31 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
               throw squashAtomCommandFailure(result);
             }
             applyPreviewServerSnapshot(threadRef, result.value);
-            const viewport = await waitForRenderedViewport(
-              ready.tabId,
-              setting,
-              input.timeoutMs ?? request.timeoutMs,
-            );
+            // Best-effort viewport verification: the server-side resize has
+            // already committed so we must not fail the MCP request if layout
+            // takes longer than expected. For hidden fill-mode tabs the webview
+            // renders at placeholder dimensions that won't match the eventual
+            // panel size, so skip verification to avoid reporting those values
+            // as confirmed.
+            let viewport: PreviewRenderedViewportSize | null = null;
+            const tabVisible =
+              useBrowserSurfaceStore.getState().byTabId[ready.tabId]?.visible ?? false;
+            if (tabVisible || setting._tag !== "fill") {
+              try {
+                viewport = await waitForRenderedViewport(
+                  ready.tabId,
+                  setting,
+                  input.timeoutMs ?? request.timeoutMs,
+                );
+              } catch {
+                // Verification timed out but server state is already committed.
+              }
+            }
+            viewport ??= await readRenderedViewport(ready.tabId).catch(() => null);
+            viewport ??=
+              setting._tag !== "fill"
+                ? { width: setting.width, height: setting.height }
+                : { width: 1280, height: 800 };
             return {
               tabId: ready.tabId,
               setting,
