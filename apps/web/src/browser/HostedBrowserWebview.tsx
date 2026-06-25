@@ -1,15 +1,8 @@
 "use client";
 
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
-import { Scaling } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
@@ -17,10 +10,11 @@ import { cn } from "~/lib/utils";
 
 import { useActiveBrowserRecordingTabId } from "./browserRecording";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
-import { commitBrowserViewportChange } from "./browserViewportActions";
-import { resizeFreeformViewport, resolveBrowserViewportLayout } from "./browserViewportLayout";
+import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
+import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
+import { useBrowserViewportResize } from "./useBrowserViewportResize";
 
 interface ElectronWebview extends HTMLElement {
   src: string;
@@ -37,11 +31,6 @@ declare global {
   }
 }
 
-const viewportSettingKey = (viewport: PreviewViewportSetting): string =>
-  viewport._tag === "fill"
-    ? "fill"
-    : `${viewport._tag}:${viewport.width}:${viewport.height}:${viewport._tag === "preset" ? viewport.presetId : ""}`;
-
 export function HostedBrowserWebview(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
@@ -53,14 +42,8 @@ export function HostedBrowserWebview(props: {
   const config = usePreviewWebviewConfig(threadRef.environmentId);
   const [initialSrc] = useState(() => initialUrl ?? "about:blank");
   const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
-  const dragCleanupRef = useRef<(() => void) | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
-  const [dragViewport, setDragViewport] = useState<{
-    readonly sourceKey: string;
-    readonly width: number;
-    readonly height: number;
-  } | null>(null);
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
       const current = state.byTabId[tabId];
@@ -82,13 +65,6 @@ export function HostedBrowserWebview(props: {
       lease.release();
     };
   }, [tabId]);
-
-  useEffect(
-    () => () => {
-      dragCleanupRef.current?.();
-    },
-    [],
-  );
 
   const setWebviewRef = useCallback((node: HTMLElement | null) => {
     webviewRef.current = node as ElectronWebview | null;
@@ -131,88 +107,30 @@ export function HostedBrowserWebview(props: {
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
-  const sourceViewportKey = viewportSettingKey(viewport);
-  const effectiveViewport =
-    dragViewport?.sourceKey === sourceViewportKey
-      ? ({
-          _tag: "freeform",
-          width: dragViewport.width,
-          height: dragViewport.height,
-        } as const satisfies PreviewViewportSetting)
-      : viewport;
   const normalizedZoomFactor = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
   const hiddenSize =
-    effectiveViewport._tag !== "fill"
+    viewport._tag !== "fill"
       ? {
-          width: effectiveViewport.width * normalizedZoomFactor,
-          height: effectiveViewport.height * normalizedZoomFactor,
+          width: viewport.width * normalizedZoomFactor,
+          height: viewport.height * normalizedZoomFactor,
         }
       : { width: lastRect?.width ?? 1280, height: lastRect?.height ?? 800 };
   const containerSize = active && lastRect ? lastRect : hiddenSize;
-  const layout = resolveBrowserViewportLayout(containerSize, effectiveViewport, zoomFactor);
-
-  const handleResizePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (effectiveViewport._tag !== "freeform") return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragCleanupRef.current?.();
-    const pointerId = event.pointerId;
-    const target = event.currentTarget;
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startWidth = effectiveViewport.width;
-    const startHeight = effectiveViewport.height;
-    let latest = { width: startWidth, height: startHeight };
-    try {
-      target.setPointerCapture(pointerId);
-    } catch {
-      // Window listeners below keep the drag functional when capture is unavailable.
-    }
-
-    const move = (moveEvent: PointerEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      moveEvent.preventDefault();
-      const { width, height } = resizeFreeformViewport(
-        { width: startWidth, height: startHeight },
-        { x: moveEvent.clientX - startX, y: moveEvent.clientY - startY },
-        zoomFactor,
-      );
-      latest = { width, height };
-      setDragViewport({ sourceKey: sourceViewportKey, width, height });
-    };
-    function cleanup() {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", finish);
-      window.removeEventListener("pointercancel", cancel);
-      dragCleanupRef.current = null;
-      try {
-        target.releasePointerCapture(pointerId);
-      } catch {
-        // The browser may already have released capture on pointerup.
-      }
-    }
-    function finish(upEvent: PointerEvent) {
-      if (upEvent.pointerId !== pointerId) return;
-      cleanup();
-      void commitBrowserViewportChange(tabId, {
-        _tag: "freeform",
-        width: latest.width,
-        height: latest.height,
-      }).then(
-        () => setDragViewport(null),
-        () => setDragViewport(null),
-      );
-    }
-    function cancel(cancelEvent: PointerEvent) {
-      if (cancelEvent.pointerId !== pointerId) return;
-      cleanup();
-      setDragViewport(null);
-    }
-    dragCleanupRef.current = cleanup;
-    window.addEventListener("pointermove", move, { passive: false });
-    window.addEventListener("pointerup", finish);
-    window.addEventListener("pointercancel", cancel);
-  };
+  const deviceToolbarVisible = active && viewport._tag !== "fill";
+  const {
+    activeDrag,
+    commitViewportChange,
+    effectiveViewport,
+    handleResizeKeyDown,
+    handleResizePointerDown,
+    layout,
+  } = useBrowserViewportResize({
+    tabId,
+    viewport,
+    zoomFactor,
+    containerSize,
+    deviceToolbarVisible,
+  });
 
   const syncContentPresentation = useCallback(() => {
     const wrapper = wrapperRef.current;
@@ -271,6 +189,13 @@ export function HostedBrowserWebview(props: {
       data-preview-viewport={tabId}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
+        {deviceToolbarVisible && effectiveViewport._tag !== "fill" ? (
+          <BrowserDeviceToolbar
+            setting={effectiveViewport}
+            width={Math.max(1, Math.round(containerSize.width))}
+            onChange={commitViewportChange}
+          />
+        ) : null}
         <webview
           ref={setWebviewRef}
           src={initialSrc}
@@ -301,19 +226,27 @@ export function HostedBrowserWebview(props: {
             height: layout.viewportHeight,
           }}
         />
-        {active && effectiveViewport._tag === "freeform" ? (
-          <button
-            type="button"
-            aria-label="Resize browser viewport"
-            className="absolute z-10 flex size-5 cursor-nwse-resize touch-none items-center justify-center rounded-sm border border-border bg-background/95 text-muted-foreground shadow-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            style={{
-              left: layout.viewportX + layout.viewportWidth - 18,
-              top: layout.viewportY + layout.viewportHeight - 18,
-            }}
-            onPointerDown={handleResizePointerDown}
-          >
-            <Scaling className="size-3" />
-          </button>
+        {active && effectiveViewport._tag !== "fill" ? (
+          <>
+            <BrowserViewportResizeHandles
+              layout={layout}
+              activeDirection={activeDrag?.direction ?? null}
+              onPointerDown={handleResizePointerDown}
+              onKeyDown={handleResizeKeyDown}
+            />
+            {activeDrag ? (
+              <div
+                className="pointer-events-none absolute z-40 -translate-x-1/2 rounded-md border border-border/80 bg-background/95 px-2 py-1 text-[11px] font-medium tabular-nums text-foreground shadow-md backdrop-blur-sm"
+                style={{
+                  left: layout.viewportX + layout.viewportWidth / 2,
+                  top: layout.viewportY + 10,
+                }}
+                aria-hidden="true"
+              >
+                {activeDrag.width} × {activeDrag.height}
+              </div>
+            ) : null}
+          </>
         ) : null}
       </div>
     </div>

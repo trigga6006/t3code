@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resizeFreeformViewport, resolveBrowserViewportLayout } from "./browserViewportLayout";
+import {
+  resizeBrowserViewportFromRail,
+  resizeFreeformViewport,
+  resolveBrowserDeviceViewportLayout,
+  resolveBrowserViewportLayout,
+  resolveResponsiveBrowserViewportSize,
+} from "./browserViewportLayout";
 
 describe("resolveBrowserViewportLayout", () => {
   it("fills the available surface in fill mode", () => {
@@ -73,5 +79,76 @@ describe("resolveBrowserViewportLayout", () => {
     });
     const large = resizeFreeformViewport({ width: 1920, height: 1080 }, { x: 2000, y: 2000 });
     expect(large.width * large.height).toBeLessThanOrEqual(3840 * 2160);
+  });
+
+  it("resizes only the axes controlled by each edge", () => {
+    expect(
+      resizeFreeformViewport({ width: 800, height: 600 }, { x: -100, y: 500 }, 1, "west"),
+    ).toEqual({ width: 900, height: 600 });
+    expect(
+      resizeFreeformViewport({ width: 800, height: 600 }, { x: 500, y: 100 }, 1, "north"),
+    ).toEqual({ width: 800, height: 500 });
+    expect(
+      resizeFreeformViewport({ width: 800, height: 600 }, { x: -100, y: -50 }, 1, "northwest"),
+    ).toEqual({ width: 900, height: 650 });
+  });
+
+  it("reserves persistent device-toolbar rails around the guest viewport", () => {
+    expect(
+      resolveBrowserDeviceViewportLayout(
+        { width: 1200, height: 900 },
+        { _tag: "freeform", width: 1120, height: 818 },
+      ),
+    ).toEqual({
+      canvasWidth: 1200,
+      canvasHeight: 900,
+      viewportX: 40,
+      viewportY: 42,
+      viewportWidth: 1120,
+      viewportHeight: 818,
+      fillsPanel: false,
+    });
+  });
+
+  it("captures the available framed area when responsive mode is enabled", () => {
+    expect(resolveResponsiveBrowserViewportSize({ width: 1200, height: 900 })).toEqual({
+      width: 1120,
+      height: 818,
+    });
+    expect(resolveResponsiveBrowserViewportSize({ width: 1200, height: 900 }, 2)).toEqual({
+      width: 560,
+      height: 409,
+    });
+  });
+
+  it("keeps the grabbed rail under the pointer across centered layout boundaries", () => {
+    const available = { width: 1120, height: 818 };
+    expect(
+      resizeBrowserViewportFromRail(
+        { width: 1120, height: 818 },
+        { x: -100, y: -50 },
+        available,
+        1,
+        "southeast",
+      ),
+    ).toEqual({ width: 920, height: 718 });
+    expect(
+      resizeBrowserViewportFromRail(
+        { width: 800, height: 600 },
+        { x: 300, y: 0 },
+        { width: 1200, height: 800 },
+        1,
+        "east",
+      ),
+    ).toEqual({ width: 1300, height: 600 });
+    expect(
+      resizeBrowserViewportFromRail(
+        { width: 560, height: 409 },
+        { x: -100, y: 0 },
+        available,
+        2,
+        "east",
+      ),
+    ).toEqual({ width: 460, height: 409 });
   });
 });
