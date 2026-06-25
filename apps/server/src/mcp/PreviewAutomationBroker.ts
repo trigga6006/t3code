@@ -4,7 +4,7 @@ import {
   PreviewAutomationExecutionError,
   PreviewAutomationInvalidSelectorError,
   PreviewAutomationMalformedResponseError,
-  PreviewAutomationNoFocusedOwnerError,
+  PreviewAutomationNoAvailableHostError,
   PreviewAutomationRemoteUnavailableError,
   PreviewAutomationRequestQueueClosedError,
   PreviewAutomationResultTooLargeError,
@@ -13,13 +13,14 @@ import {
   PreviewAutomationUnsupportedClientError,
   type PreviewAutomationError,
   type PreviewAutomationOperation,
-  type PreviewAutomationOwner,
-  type PreviewAutomationOwnerFocus,
+  type PreviewAutomationHost,
+  type PreviewAutomationHostFocus,
   type PreviewAutomationResponse,
   type PreviewAutomationStreamEvent,
   type PreviewTabId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -43,9 +44,9 @@ export class PreviewAutomationBroker extends Context.Service<
   PreviewAutomationBroker,
   {
     readonly connect: (
-      owner: PreviewAutomationOwner,
+      host: PreviewAutomationHost,
     ) => Effect.Effect<Stream.Stream<PreviewAutomationStreamEvent>>;
-    readonly focusOwner: (owner: PreviewAutomationOwnerFocus) => Effect.Effect<void>;
+    readonly focusHost: (host: PreviewAutomationHostFocus) => Effect.Effect<void>;
     readonly respond: (
       response: PreviewAutomationResponse,
     ) => Effect.Effect<void, PreviewAutomationError>;
@@ -58,9 +59,7 @@ export class PreviewAutomationBroker extends Context.Service<
 interface ClientConnection {
   readonly clientId: string;
   readonly connectionId: string;
-  readonly environmentId: PreviewAutomationOwner["environmentId"];
-  readonly threadId: PreviewAutomationOwner["threadId"];
-  readonly supportsAutomation: boolean;
+  readonly environmentId: PreviewAutomationHost["environmentId"];
   readonly focused: boolean;
   readonly focusOrder: number;
   readonly queue: Queue.Queue<PreviewAutomationStreamEvent>;
@@ -70,6 +69,13 @@ interface PendingRequest {
   readonly queue: ClientConnection["queue"];
   readonly deferred: Deferred.Deferred<unknown, PreviewAutomationError>;
   readonly context: PreviewAutomationRequestErrorContext;
+}
+
+interface HostAssignment {
+  readonly clientId: ClientConnection["clientId"];
+  readonly connectionId: ClientConnection["connectionId"];
+  readonly queue: ClientConnection["queue"];
+  readonly expiresAt: number;
 }
 
 interface PreviewAutomationRequestErrorContext {
@@ -89,6 +95,7 @@ interface PreviewAutomationRequestErrorContext {
 
 interface BrokerState {
   readonly clients: ReadonlyMap<string, ClientConnection>;
+  readonly assignments: ReadonlyMap<string, HostAssignment>;
   readonly pending: ReadonlyMap<string, PendingRequest>;
   readonly requestSequence: number;
   readonly focusSequence: number;
@@ -106,6 +113,9 @@ const selectorDiagnosticsFromInput = (
   }
   return {};
 };
+
+const hostAssignmentKey = (scope: McpInvocationContext.McpInvocationScope): string =>
+  `${scope.environmentId}\u0000${scope.providerSessionId}`;
 
 type RemoteDetailKind = "null" | "array" | "object" | "string" | "number" | "boolean";
 
@@ -135,8 +145,8 @@ const classifyResponseError = (
     cause: error,
   };
   switch (error._tag) {
-    case "PreviewAutomationNoFocusedOwnerError":
-      return new PreviewAutomationNoFocusedOwnerError({
+    case "PreviewAutomationNoAvailableHostError":
+      return new PreviewAutomationNoAvailableHostError({
         ...context,
         ...remoteDiagnostics,
       });
@@ -200,6 +210,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   const crypto = yield* Crypto.Crypto;
   const state = yield* SynchronizedRef.make<BrokerState>({
     clients: new Map(),
+    assignments: new Map(),
     pending: new Map(),
     requestSequence: 0,
     focusSequence: 0,
@@ -211,10 +222,16 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   ) {
     const toFail = yield* SynchronizedRef.modify(state, (current) => {
       const clients = new Map(current.clients);
+      const assignments = new Map(current.assignments);
       const pending = new Map(current.pending);
       const disconnected: PendingRequest[] = [];
       if (current.clients.get(clientId)?.queue === queue) {
         clients.delete(clientId);
+      }
+      for (const [assignmentKey, assignment] of assignments) {
+        if (assignment.queue === queue) {
+          assignments.delete(assignmentKey);
+        }
       }
       for (const [requestId, entry] of pending) {
         if (entry.queue === queue) {
@@ -222,7 +239,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           disconnected.push(entry);
         }
       }
-      return [disconnected, { ...current, clients, pending }] as const;
+      return [disconnected, { ...current, clients, assignments, pending }] as const;
     });
     yield* Effect.forEach(
       toFail,
@@ -234,18 +251,16 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   });
 
   const acquireConnection = Effect.fn("PreviewAutomationBroker.acquireConnection")(function* (
-    owner: PreviewAutomationOwner,
+    host: PreviewAutomationHost,
   ) {
-    const clientId = owner.clientId;
+    const clientId = host.clientId;
     const queue = yield* Queue.unbounded<PreviewAutomationStreamEvent>();
     const connectionId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
     yield* Queue.offer(queue, { type: "connected", connectionId });
     const connection: ClientConnection = {
       clientId,
       connectionId,
-      environmentId: owner.environmentId,
-      threadId: owner.threadId,
-      supportsAutomation: owner.supportsAutomation,
+      environmentId: host.environmentId,
       focused: false,
       focusOrder: 0,
       queue,
@@ -268,35 +283,34 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
 
   const connect: PreviewAutomationBroker["Service"]["connect"] = Effect.fn(
     "PreviewAutomationBroker.connect",
-  )((owner) =>
+  )((host) =>
     Effect.succeed(
       Stream.unwrap(
-        Effect.acquireRelease(acquireConnection(owner), (connection) =>
+        Effect.acquireRelease(acquireConnection(host), (connection) =>
           disconnect(connection.clientId, connection.queue),
         ).pipe(Effect.map((connection) => Stream.fromQueue(connection.queue))),
       ),
     ),
   );
 
-  const focusOwner: PreviewAutomationBroker["Service"]["focusOwner"] = Effect.fn(
-    "PreviewAutomationBroker.focusOwner",
-  )(function* (owner) {
+  const focusHost: PreviewAutomationBroker["Service"]["focusHost"] = Effect.fn(
+    "PreviewAutomationBroker.focusHost",
+  )(function* (host) {
     yield* SynchronizedRef.update(state, (current) => {
-      const currentOwner = current.clients.get(owner.clientId);
+      const currentHost = current.clients.get(host.clientId);
       if (
-        !currentOwner ||
-        currentOwner.environmentId !== owner.environmentId ||
-        currentOwner.threadId !== owner.threadId ||
-        currentOwner.connectionId !== owner.connectionId
+        !currentHost ||
+        currentHost.environmentId !== host.environmentId ||
+        currentHost.connectionId !== host.connectionId
       ) {
         return current;
       }
       const clients = new Map(current.clients);
-      const focusSequence = owner.focused ? current.focusSequence + 1 : current.focusSequence;
-      clients.set(owner.clientId, {
-        ...currentOwner,
-        focused: owner.focused,
-        focusOrder: owner.focused ? focusSequence : currentOwner.focusOrder,
+      const focusSequence = host.focused ? current.focusSequence + 1 : current.focusSequence;
+      clients.set(host.clientId, {
+        ...currentHost,
+        focused: host.focused,
+        focusOrder: host.focused ? focusSequence : currentHost.focusOrder,
       });
       return { ...current, clients, focusSequence };
     });
@@ -336,19 +350,45 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
   ): Effect.fn.Return<A, PreviewAutomationError> {
     const timeoutMs = input.timeoutMs ?? 15_000;
     const deferred = yield* Deferred.make<unknown, PreviewAutomationError>();
+    const now = yield* Clock.currentTimeMillis;
     const route = yield* SynchronizedRef.modify(state, (current) => {
-      const connection = Array.from(current.clients.values())
-        .filter(
-          (owner) =>
-            owner.environmentId === input.scope.environmentId &&
-            owner.threadId === input.scope.threadId &&
-            owner.supportsAutomation,
-        )
-        .sort(
-          (left, right) =>
-            Number(right.focused) - Number(left.focused) || right.focusOrder - left.focusOrder,
-        )[0];
-      if (!connection) return [undefined, current] as const;
+      const assignments = new Map(
+        Array.from(current.assignments).filter(([, assignment]) => {
+          const connection = current.clients.get(assignment.clientId);
+          return (
+            assignment.expiresAt > now &&
+            connection?.connectionId === assignment.connectionId &&
+            connection.queue === assignment.queue
+          );
+        }),
+      );
+      const assignmentKey = hostAssignmentKey(input.scope);
+      const assigned = assignments.get(assignmentKey);
+      const assignedConnection = assigned ? current.clients.get(assigned.clientId) : undefined;
+      // Keep one provider session on one physical desktop runtime so a
+      // multi-step browser interaction cannot jump between independent
+      // Electron cookie/DOM state. A dead lease is pruned above and may then
+      // fail over to the best remaining host.
+      const connection =
+        assignedConnection?.environmentId === input.scope.environmentId
+          ? assignedConnection
+          : Array.from(current.clients.values())
+              .filter((host) => host.environmentId === input.scope.environmentId)
+              .sort(
+                (left, right) =>
+                  Number(right.focused) - Number(left.focused) ||
+                  right.focusOrder - left.focusOrder,
+              )[0];
+      if (!connection) {
+        assignments.delete(assignmentKey);
+        return [undefined, { ...current, assignments }] as const;
+      }
+      assignments.set(assignmentKey, {
+        clientId: connection.clientId,
+        connectionId: connection.connectionId,
+        queue: connection.queue,
+        expiresAt: input.scope.expiresAt,
+      });
 
       const requestId = `preview-${current.requestSequence}`;
       const tabId = input.tabId;
@@ -370,11 +410,11 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
       pending.set(requestId, { queue: connection.queue, deferred, context });
       return [
         { connection, requestId, requestContext: context },
-        { ...current, pending, requestSequence: current.requestSequence + 1 },
+        { ...current, assignments, pending, requestSequence: current.requestSequence + 1 },
       ] as const;
     });
     if (!route) {
-      return yield* new PreviewAutomationNoFocusedOwnerError({
+      return yield* new PreviewAutomationNoAvailableHostError({
         operation: input.operation,
         environmentId: input.scope.environmentId,
         threadId: input.scope.threadId,
@@ -418,7 +458,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
     return yield* awaitResponse().pipe(Effect.ensuring(removePending));
   });
 
-  return PreviewAutomationBroker.of({ connect, focusOwner, respond, invoke });
+  return PreviewAutomationBroker.of({ connect, focusHost, respond, invoke });
 }).pipe(Effect.withSpan("PreviewAutomationBroker.make"));
 
 export const layer = Layer.effect(PreviewAutomationBroker, make);

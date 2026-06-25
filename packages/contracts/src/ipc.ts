@@ -74,8 +74,8 @@ import type {
 import {
   PreviewAutomationClickInput,
   PreviewAutomationEvaluateInput,
-  PreviewAutomationOwner,
-  PreviewAutomationOwnerFocus,
+  PreviewAutomationHost,
+  PreviewAutomationHostFocus,
   PreviewAutomationPressInput,
   PreviewAutomationResponse,
   PreviewAutomationScrollInput,
@@ -1160,12 +1160,12 @@ export interface EnvironmentApi {
     reportStatus: (input: typeof PreviewReportStatusInput.Encoded) => Promise<void>;
     automation: {
       connect: (
-        input: PreviewAutomationOwner,
+        input: PreviewAutomationHost,
         callback: (event: PreviewAutomationStreamEvent) => void,
         options?: { onResubscribe?: () => void },
       ) => () => void;
       respond: (response: PreviewAutomationResponse) => Promise<void>;
-      focusOwner: (input: PreviewAutomationOwnerFocus) => Promise<void>;
+      focusHost: (input: PreviewAutomationHostFocus) => Promise<void>;
     };
     onEvent: (
       callback: (event: PreviewEvent) => void,
