@@ -2226,7 +2226,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* send("Emulation.setFocusEmulationEnabled", { enabled: true });
       yield* expectAgentInput(tabId, { kind: "key", key, code: params.code });
       yield* send("Input.dispatchKeyEvent", { type: "keyDown", ...params });
-      yield* send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
+      const preKeyUpEpoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
+      yield* send("Input.dispatchKeyEvent", { type: "keyUp", ...params }).pipe(
+        Effect.tapError(() =>
+          Ref.get(controlEpochRef).pipe(
+            Effect.map((epochs) => {
+              // If the epoch changed during send, the CDP keyUp was dispatched
+              // (pre-check passed) before the post-check detected the change.
+              // Mark released to prevent a duplicate cleanup keyUp.
+              if ((epochs.get(tabId) ?? 0) !== preKeyUpEpoch) {
+                keyReleased = true;
+              }
+            }),
+          ),
+        ),
+      );
       keyReleased = true;
     }).pipe(Effect.ensuring(releaseInput));
   });
