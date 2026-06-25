@@ -163,7 +163,8 @@ export function applyPreviewServerEvent(ref: ScopedThreadRef, event: PreviewEven
   updateThreadPreviewState(ref, (current) => {
     switch (event.type) {
       case "opened":
-      case "navigated": {
+      case "navigated":
+      case "resized": {
         const snapshot = event.snapshot;
         if (current.suppressedTabIds.has(snapshot.tabId)) return current;
         const recentlySeenUrls =

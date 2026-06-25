@@ -54,6 +54,12 @@ export function createPreviewEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    resize: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:resize",
+      tag: WS_METHODS.previewResize,
+      scheduler: lifecycleScheduler,
+      concurrency: lifecycleConcurrency,
+    }),
     refresh: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:refresh",
       tag: WS_METHODS.previewRefresh,
