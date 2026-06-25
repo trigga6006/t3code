@@ -86,9 +86,9 @@ export function createPreviewEnvironmentAtoms<R, E>(
           JSON.stringify([environmentId, input.connectionId, input.requestId]),
       },
     }),
-    focusAutomationOwner: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:preview:automation-focus-owner",
-      tag: WS_METHODS.previewAutomationFocusOwner,
+    focusAutomationHost: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:automation-focus-host",
+      tag: WS_METHODS.previewAutomationFocusHost,
       scheduler: automationScheduler,
       concurrency: {
         mode: "latest",

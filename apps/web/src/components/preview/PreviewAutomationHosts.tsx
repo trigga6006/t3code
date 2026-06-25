@@ -1,23 +1,28 @@
 "use client";
 
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
+  type EnvironmentId,
   type PreviewAutomationNavigateInput,
   type PreviewAutomationOpenInput,
-  type PreviewAutomationOwner as PreviewAutomationOwnerState,
+  type PreviewAutomationHost as PreviewAutomationHostState,
   type PreviewAutomationRequest,
   type PreviewAutomationStatus,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Atom } from "effect/unstable/reactivity";
 
 import { applyPreviewServerSnapshot, readThreadPreviewState } from "~/previewStateStore";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { resolveBrowserNavigationTarget } from "~/browser/browserTargetResolver";
 import { startBrowserRecording, stopBrowserRecording } from "~/browser/browserRecording";
+import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
+import { isElectron } from "~/env";
+import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
@@ -26,7 +31,6 @@ import {
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
-  PreviewAutomationStaleOwnerError,
   PreviewAutomationTargetUnavailableError,
 } from "./previewAutomationErrors";
 import { createPreviewAutomationRequestConsumerAtom } from "./previewAutomationRequestConsumer";
@@ -35,13 +39,13 @@ import { createPreviewAutomationClientId } from "./previewAutomationClientId";
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
   requestId: string,
+  tabId: string,
   timeoutMs: number,
 ): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     const state = readThreadPreviewState(threadRef);
-    const tabId = state.snapshot?.tabId;
-    if (tabId && state.desktopOverlay && previewBridge) {
+    if (state.desktopByTabId[tabId] && previewBridge) {
       const status = await previewBridge.automation.status(tabId);
       if (status.available) return;
     }
@@ -89,15 +93,19 @@ const waitForNavigationReadiness = async (
 
 const currentStatus = async (
   threadRef: ScopedThreadRef,
-  visible: boolean,
+  requestedTabId: string | null,
 ): Promise<PreviewAutomationStatus> => {
   const state = readThreadPreviewState(threadRef);
-  const tabId = state.snapshot?.tabId ?? null;
-  if (tabId && previewBridge && state.desktopOverlay) {
+  const tabId = requestedTabId ?? state.snapshot?.tabId ?? null;
+  const snapshot = (tabId ? state.sessions[tabId] : null) ?? state.snapshot;
+  const visible = tabId
+    ? (useBrowserSurfaceStore.getState().byTabId[tabId]?.visible ?? false)
+    : false;
+  if (tabId && previewBridge && state.desktopByTabId[tabId]) {
     const status = await previewBridge.automation.status(tabId);
     return { ...status, visible };
   }
-  const navStatus = state.snapshot?.navStatus;
+  const navStatus = snapshot?.navStatus;
   return {
     available: Boolean(previewBridge?.automation),
     visible,
@@ -108,36 +116,43 @@ const currentStatus = async (
   };
 };
 
-export function PreviewAutomationOwner(props: {
-  readonly threadRef: ScopedThreadRef;
-  readonly visible: boolean;
-}) {
+export function PreviewAutomationHosts() {
+  const { environments } = useEnvironments();
+  if (!isElectron || !previewBridge?.automation) return null;
   return (
-    <PreviewAutomationOwnerLifetime
-      key={JSON.stringify([props.threadRef.environmentId, props.threadRef.threadId])}
-      {...props}
-    />
+    <>
+      {/*
+       * Host lifetime follows the desktop runtime's environment connections,
+       * not the routed thread. This keeps background threads automatable and
+       * lets the subscription runtime own reconnects for every saved target.
+       */}
+      {environments.map((environment) => (
+        <PreviewAutomationHost
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+        />
+      ))}
+    </>
   );
 }
 
-function PreviewAutomationOwnerLifetime(props: {
-  readonly threadRef: ScopedThreadRef;
-  readonly visible: boolean;
-}) {
-  const { threadRef, visible } = props;
+function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
+  const { environmentId } = props;
+  const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
-  const initialAutomationOwner = useMemo<PreviewAutomationOwnerState>(
+  const initialAutomationHost = useMemo<PreviewAutomationHostState>(
     () => ({
       clientId: automationClientId,
-      environmentId: threadRef.environmentId,
-      threadId: threadRef.threadId,
-      supportsAutomation: Boolean(previewBridge?.automation),
+      environmentId,
     }),
-    [automationClientId, threadRef.environmentId, threadRef.threadId],
+    [automationClientId, environmentId],
   );
   const automationRequestsAtom = previewEnvironment.automationRequests({
-    environmentId: threadRef.environmentId,
-    input: initialAutomationOwner,
+    environmentId,
+    input: initialAutomationHost,
+  });
+  const listPreviews = useAtomQueryRunner(previewEnvironment.list, {
+    reportFailure: false,
   });
   const open = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
@@ -146,48 +161,72 @@ function PreviewAutomationOwnerLifetime(props: {
     previewEnvironment.respondToAutomation,
     "preview automation response",
   );
-  const focusAutomationOwner = useAtomCommand(
-    previewEnvironment.focusAutomationOwner,
-    "preview automation owner focus",
+  const focusAutomationHost = useAtomCommand(
+    previewEnvironment.focusAutomationHost,
+    "preview automation host focus",
   );
   const [automationConnectionAtom] = useState(() => Atom.make<string | null>(null));
   const automationConnectionId = useAtomValue(automationConnectionAtom);
 
   const handleRequest = useCallback(
     async (request: PreviewAutomationRequest): Promise<unknown> => {
+      const threadRef: ScopedThreadRef = {
+        environmentId,
+        threadId: request.threadId,
+      };
       let tabId = request.tabId ?? null;
       try {
-        if (request.threadId !== threadRef.threadId) {
-          throw new PreviewAutomationStaleOwnerError({
-            requestId: request.requestId,
-            environmentId: threadRef.environmentId,
-            expectedThreadId: threadRef.threadId,
-            requestedThreadId: request.threadId,
-          });
+        let state = readThreadPreviewState(threadRef);
+        const needsSessionSync =
+          Object.keys(state.sessions).length === 0 ||
+          (request.tabId !== undefined && state.sessions[request.tabId] === undefined);
+        if (needsSessionSync) {
+          const listTarget = {
+            environmentId,
+            input: { threadId: request.threadId },
+          } as const;
+          registry.refresh(previewEnvironment.list(listTarget));
+          const result = await listPreviews(listTarget);
+          if (result._tag === "Failure") {
+            throw squashAtomCommandFailure(result);
+          }
+          for (const snapshot of result.value.sessions) {
+            applyPreviewServerSnapshot(threadRef, snapshot);
+          }
+          state = readThreadPreviewState(threadRef);
         }
-        const state = readThreadPreviewState(threadRef);
         tabId = request.tabId ?? state.snapshot?.tabId ?? null;
         const unavailableTarget = {
           requestId: request.requestId,
           operation: request.operation,
-          environmentId: threadRef.environmentId,
-          threadId: threadRef.threadId,
+          environmentId,
+          threadId: request.threadId,
           tabId,
           bridgeAvailable: Boolean(previewBridge),
         };
+        const requireReadyTab = async () => {
+          const bridge = previewBridge;
+          const readyTabId = tabId;
+          if (!bridge || !readyTabId) {
+            throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+          }
+          await waitForDesktopOverlay(threadRef, request.requestId, readyTabId, request.timeoutMs);
+          return { bridge, tabId: readyTabId };
+        };
         switch (request.operation) {
           case "status":
-            return await currentStatus(threadRef, visible);
+            return await currentStatus(threadRef, tabId);
           case "open": {
             const input = request.input as PreviewAutomationOpenInput;
             let activeTabId =
               (input.reuseExistingTab ?? true) ? (state.snapshot?.tabId ?? null) : null;
+            const reusedExistingTab = activeTabId !== null;
             tabId = activeTabId;
             if (!activeTabId) {
               const result = await open({
-                environmentId: threadRef.environmentId,
+                environmentId,
                 input: {
-                  threadId: threadRef.threadId,
+                  threadId: request.threadId,
                   ...(input.url ? { url: input.url } : {}),
                 },
               });
@@ -198,109 +237,105 @@ function PreviewAutomationOwnerLifetime(props: {
               applyPreviewServerSnapshot(threadRef, snapshot);
               activeTabId = snapshot.tabId;
               tabId = activeTabId;
-            } else if (input.url && previewBridge) {
-              await previewBridge.navigate(activeTabId, input.url);
             }
             if (input.show ?? true) {
               useRightPanelStore.getState().openBrowser(threadRef, activeTabId);
             }
-            await waitForDesktopOverlay(threadRef, request.requestId, request.timeoutMs);
-            return await currentStatus(threadRef, input.show ?? true);
+            await waitForDesktopOverlay(
+              threadRef,
+              request.requestId,
+              activeTabId,
+              request.timeoutMs,
+            );
+            if (reusedExistingTab && input.url && previewBridge) {
+              await previewBridge.navigate(activeTabId, input.url);
+            }
+            return await currentStatus(threadRef, activeTabId);
           }
           case "navigate": {
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
+            const ready = await requireReadyTab();
             const input = request.input as PreviewAutomationNavigateInput;
             const resolution = resolveBrowserNavigationTarget(
-              threadRef.environmentId,
-              input.target ?? { kind: "url", url: input.url! },
+              environmentId,
+              input.target ?? {
+                kind: "url",
+                url: input.url!,
+              },
             );
-            await previewBridge.navigate(tabId, resolution.resolvedUrl);
+            await ready.bridge.navigate(ready.tabId, resolution.resolvedUrl);
             await waitForNavigationReadiness(
               threadRef,
               request.requestId,
-              tabId,
+              ready.tabId,
               input.readiness ?? "load",
               input.timeoutMs ?? request.timeoutMs,
             );
-            return await currentStatus(threadRef, visible);
+            return await currentStatus(threadRef, ready.tabId);
           }
-          case "snapshot":
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            return await previewBridge.automation.snapshot(tabId);
-          case "click":
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            return await previewBridge.automation.click(
-              tabId,
-              request.input as Parameters<typeof previewBridge.automation.click>[1],
+          case "snapshot": {
+            const ready = await requireReadyTab();
+            return await ready.bridge.automation.snapshot(ready.tabId);
+          }
+          case "click": {
+            const ready = await requireReadyTab();
+            return await ready.bridge.automation.click(
+              ready.tabId,
+              request.input as Parameters<typeof ready.bridge.automation.click>[1],
             );
-          case "type":
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            return await previewBridge.automation.type(
-              tabId,
-              request.input as Parameters<typeof previewBridge.automation.type>[1],
+          }
+          case "type": {
+            const ready = await requireReadyTab();
+            return await ready.bridge.automation.type(
+              ready.tabId,
+              request.input as Parameters<typeof ready.bridge.automation.type>[1],
             );
-          case "press":
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            return await previewBridge.automation.press(
-              tabId,
-              request.input as Parameters<typeof previewBridge.automation.press>[1],
+          }
+          case "press": {
+            const ready = await requireReadyTab();
+            return await ready.bridge.automation.press(
+              ready.tabId,
+              request.input as Parameters<typeof ready.bridge.automation.press>[1],
             );
-          case "scroll":
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            return await previewBridge.automation.scroll(
-              tabId,
-              request.input as Parameters<typeof previewBridge.automation.scroll>[1],
+          }
+          case "scroll": {
+            const ready = await requireReadyTab();
+            return await ready.bridge.automation.scroll(
+              ready.tabId,
+              request.input as Parameters<typeof ready.bridge.automation.scroll>[1],
             );
-          case "evaluate":
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            return await previewBridge.automation.evaluate(
-              tabId,
-              request.input as Parameters<typeof previewBridge.automation.evaluate>[1],
+          }
+          case "evaluate": {
+            const ready = await requireReadyTab();
+            return await ready.bridge.automation.evaluate(
+              ready.tabId,
+              request.input as Parameters<typeof ready.bridge.automation.evaluate>[1],
             );
-          case "waitFor":
-            if (!previewBridge || !tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            return await previewBridge.automation.waitFor(
-              tabId,
-              request.input as Parameters<typeof previewBridge.automation.waitFor>[1],
+          }
+          case "waitFor": {
+            const ready = await requireReadyTab();
+            return await ready.bridge.automation.waitFor(
+              ready.tabId,
+              request.input as Parameters<typeof ready.bridge.automation.waitFor>[1],
             );
+          }
           case "recordingStart": {
-            if (!tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            const startedAt = await startBrowserRecording(tabId);
+            const ready = await requireReadyTab();
+            const startedAt = await startBrowserRecording(ready.tabId);
             return {
-              tabId,
+              tabId: ready.tabId,
               recording: true,
               startedAt,
             };
           }
           case "recordingStop": {
-            if (!tabId) {
-              throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
-            }
-            const artifact = await stopBrowserRecording(tabId);
+            const ready = await requireReadyTab();
+            const artifact = await stopBrowserRecording(ready.tabId);
             if (!artifact) {
               throw new PreviewAutomationRecordingNotActiveError({
                 requestId: request.requestId,
-                environmentId: threadRef.environmentId,
-                threadId: threadRef.threadId,
-                tabId,
+                environmentId,
+                threadId: request.threadId,
+                tabId: ready.tabId,
               });
             }
             return artifact;
@@ -310,14 +345,14 @@ function PreviewAutomationOwnerLifetime(props: {
         throw PreviewAutomationOperationError.fromCause({
           requestId: request.requestId,
           operation: request.operation,
-          environmentId: threadRef.environmentId,
-          threadId: threadRef.threadId,
+          environmentId,
+          threadId: request.threadId,
           tabId,
           cause,
         });
       }
     },
-    [open, threadRef, visible],
+    [environmentId, listPreviews, open, registry],
   );
   const [requestHandlerAtom] = useState(() => Atom.make({ handle: handleRequest }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);
@@ -331,14 +366,14 @@ function PreviewAutomationOwnerLifetime(props: {
         requestsAtom: automationRequestsAtom,
         clientId: automationClientId,
         connectionAtom: automationConnectionAtom,
-        environmentId: threadRef.environmentId,
+        environmentId,
         requestHandlerAtom,
         respond: (response) =>
           respondToAutomation({
-            environmentId: threadRef.environmentId,
+            environmentId,
             input: response,
           }),
-        label: `preview:automation-request-consumer:${automationClientId}`,
+        label: `preview:automation-host:${environmentId}:${automationClientId}`,
       }),
     [
       automationClientId,
@@ -346,7 +381,7 @@ function PreviewAutomationOwnerLifetime(props: {
       automationRequestsAtom,
       requestHandlerAtom,
       respondToAutomation,
-      threadRef.environmentId,
+      environmentId,
     ],
   );
   useAtomValue(automationRequestConsumerAtom);
@@ -354,12 +389,11 @@ function PreviewAutomationOwnerLifetime(props: {
   useEffect(() => {
     const report = () => {
       if (!automationConnectionId) return;
-      void focusAutomationOwner({
-        environmentId: threadRef.environmentId,
+      void focusAutomationHost({
+        environmentId,
         input: {
           clientId: automationClientId,
-          environmentId: threadRef.environmentId,
-          threadId: threadRef.threadId,
+          environmentId,
           connectionId: automationConnectionId,
           focused: document.hasFocus(),
         },
@@ -372,13 +406,7 @@ function PreviewAutomationOwnerLifetime(props: {
       window.removeEventListener("focus", report);
       window.removeEventListener("blur", report);
     };
-  }, [
-    automationClientId,
-    automationConnectionId,
-    focusAutomationOwner,
-    threadRef.environmentId,
-    threadRef.threadId,
-  ]);
+  }, [automationClientId, automationConnectionId, environmentId, focusAutomationHost]);
 
   return null;
 }

@@ -4133,15 +4133,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const wsUrl = yield* getWsServerUrl("/ws");
         const firstConnected = yield* Deferred.make<string>();
         const firstClosed = yield* Deferred.make<void>();
-        const owner = {
-          clientId: "shared-preview-owner",
+        const host = {
+          clientId: "shared-preview-host",
           environmentId: testEnvironmentDescriptor.environmentId,
-          threadId: defaultThreadId,
-          supportsAutomation: true,
         } as const;
 
         yield* withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.previewAutomationConnect](owner).pipe(
+          client[WS_METHODS.previewAutomationConnect](host).pipe(
             Stream.tap((event) =>
               event.type === "connected"
                 ? Deferred.succeed(firstConnected, event.connectionId)
@@ -4154,7 +4152,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
         const firstConnectionId = yield* Deferred.await(firstConnected);
         const replacementEvent = yield* withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.previewAutomationConnect](owner).pipe(Stream.runHead),
+          client[WS_METHODS.previewAutomationConnect](host).pipe(Stream.runHead),
         ).pipe(Effect.map(Option.getOrThrow));
         const firstStreamClosed = yield* Deferred.await(firstClosed).pipe(
           Effect.timeoutOption("2 seconds"),

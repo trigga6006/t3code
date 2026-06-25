@@ -416,25 +416,23 @@ export type PreviewAutomationClientId = typeof PreviewAutomationClientId.Type;
 export const PreviewAutomationConnectionId = TrimmedNonEmptyString.check(Schema.isMaxLength(64));
 export type PreviewAutomationConnectionId = typeof PreviewAutomationConnectionId.Type;
 
-export const PreviewAutomationOwnerIdentity = Schema.Struct({
+export const PreviewAutomationHostIdentity = Schema.Struct({
   clientId: PreviewAutomationClientId,
   environmentId: EnvironmentId,
-  threadId: ThreadId,
 });
-export type PreviewAutomationOwnerIdentity = typeof PreviewAutomationOwnerIdentity.Type;
+export type PreviewAutomationHostIdentity = typeof PreviewAutomationHostIdentity.Type;
 
-export const PreviewAutomationOwner = Schema.Struct({
-  ...PreviewAutomationOwnerIdentity.fields,
-  supportsAutomation: Schema.Boolean,
+export const PreviewAutomationHost = Schema.Struct({
+  ...PreviewAutomationHostIdentity.fields,
 });
-export type PreviewAutomationOwner = typeof PreviewAutomationOwner.Type;
+export type PreviewAutomationHost = typeof PreviewAutomationHost.Type;
 
-export const PreviewAutomationOwnerFocus = Schema.Struct({
-  ...PreviewAutomationOwnerIdentity.fields,
+export const PreviewAutomationHostFocus = Schema.Struct({
+  ...PreviewAutomationHostIdentity.fields,
   connectionId: PreviewAutomationConnectionId,
   focused: Schema.Boolean,
 });
-export type PreviewAutomationOwnerFocus = typeof PreviewAutomationOwnerFocus.Type;
+export type PreviewAutomationHostFocus = typeof PreviewAutomationHostFocus.Type;
 
 export const PreviewAutomationRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
@@ -525,8 +523,8 @@ const PreviewAutomationOptionalRemoteDiagnosticFields = {
   cause: Schema.optional(Schema.Defect()),
 };
 
-export class PreviewAutomationNoFocusedOwnerError extends Schema.TaggedErrorClass<PreviewAutomationNoFocusedOwnerError>()(
-  "PreviewAutomationNoFocusedOwnerError",
+export class PreviewAutomationNoAvailableHostError extends Schema.TaggedErrorClass<PreviewAutomationNoAvailableHostError>()(
+  "PreviewAutomationNoAvailableHostError",
   {
     ...PreviewAutomationScopeErrorFields,
     clientId: Schema.optional(TrimmedNonEmptyString),
@@ -538,7 +536,7 @@ export class PreviewAutomationNoFocusedOwnerError extends Schema.TaggedErrorClas
   },
 ) {
   override get message(): string {
-    const summary = `No focused preview automation owner is available for ${this.operation} in thread ${this.threadId}.`;
+    const summary = `No preview automation host is available for ${this.operation} in environment ${this.environmentId}.`;
     return summary;
   }
 }
@@ -682,7 +680,7 @@ export class PreviewAutomationMalformedResponseError extends Schema.TaggedErrorC
 
 export const PreviewAutomationError = Schema.Union([
   PreviewAutomationUnavailableError,
-  PreviewAutomationNoFocusedOwnerError,
+  PreviewAutomationNoAvailableHostError,
   PreviewAutomationUnsupportedClientError,
   PreviewAutomationTabNotFoundError,
   PreviewAutomationTimeoutError,

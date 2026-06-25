@@ -58,8 +58,6 @@ it.effect("returns bounded structural preview snapshot failures", () =>
       const events = yield* broker.connect({
         clientId: "mcp-failure-client",
         environmentId,
-        threadId,
-        supportsAutomation: true,
       });
       yield* Stream.runForEach(events, (event) =>
         event.type === "connected"
@@ -159,8 +157,6 @@ it.effect("registers annotated tools and preserves authenticated request context
       const events = yield* broker.connect({
         clientId: "mcp-test-client",
         environmentId,
-        threadId,
-        supportsAutomation: true,
       });
       yield* Stream.runForEach(events, (event) =>
         event.type === "connected"

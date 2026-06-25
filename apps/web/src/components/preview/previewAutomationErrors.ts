@@ -1,6 +1,6 @@
 import {
   EnvironmentId,
-  type PreviewAutomationOwner,
+  type PreviewAutomationHost,
   PreviewAutomationOperation,
   type PreviewAutomationRequest,
   type PreviewAutomationResponse,
@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 export interface PreviewAutomationOperationContext {
   readonly requestId: PreviewAutomationRequest["requestId"];
   readonly operation: PreviewAutomationRequest["operation"];
-  readonly environmentId: PreviewAutomationOwner["environmentId"];
+  readonly environmentId: PreviewAutomationHost["environmentId"];
   readonly threadId: PreviewAutomationRequest["threadId"];
   readonly tabId: Exclude<PreviewAutomationRequest["tabId"], undefined> | null;
 }
@@ -53,24 +53,6 @@ export class PreviewAutomationNavigationTimeoutError extends Schema.TaggedErrorC
 
   override get message(): string {
     return `Preview navigation for request ${this.requestId} on environment ${this.environmentId} thread ${this.threadId} tab ${this.tabId} did not reach ${this.readiness} readiness within ${this.timeoutMs}ms.`;
-  }
-}
-
-export class PreviewAutomationStaleOwnerError extends Schema.TaggedErrorClass<PreviewAutomationStaleOwnerError>()(
-  "PreviewAutomationStaleOwnerError",
-  {
-    requestId: TrimmedNonEmptyString,
-    environmentId: EnvironmentId,
-    expectedThreadId: ThreadId,
-    requestedThreadId: ThreadId,
-  },
-) {
-  get responseTag() {
-    return "PreviewAutomationUnavailableError" as const;
-  }
-
-  override get message(): string {
-    return `Preview automation request ${this.requestId} targeted thread ${this.requestedThreadId}, but the owner for environment ${this.environmentId} is attached to thread ${this.expectedThreadId}.`;
   }
 }
 
@@ -125,8 +107,8 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
 ) {
   static fromCause(
     input: PreviewAutomationOperationContext & { readonly cause: unknown },
-  ): PreviewAutomationOwnerError {
-    return isPreviewAutomationOwnerError(input.cause)
+  ): PreviewAutomationHostError {
+    return isPreviewAutomationHostError(input.cause)
       ? input.cause
       : new PreviewAutomationOperationError(input);
   }
@@ -140,20 +122,19 @@ export class PreviewAutomationOperationError extends Schema.TaggedErrorClass<Pre
   }
 }
 
-export const PreviewAutomationOwnerError = Schema.Union([
+export const PreviewAutomationHostError = Schema.Union([
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationNavigationTimeoutError,
-  PreviewAutomationStaleOwnerError,
   PreviewAutomationTargetUnavailableError,
   PreviewAutomationRecordingNotActiveError,
   PreviewAutomationOperationError,
 ]);
-export type PreviewAutomationOwnerError = typeof PreviewAutomationOwnerError.Type;
+export type PreviewAutomationHostError = typeof PreviewAutomationHostError.Type;
 
-export const isPreviewAutomationOwnerError = Schema.is(PreviewAutomationOwnerError);
+export const isPreviewAutomationHostError = Schema.is(PreviewAutomationHostError);
 
-export function serializePreviewAutomationOwnerError(
-  error: PreviewAutomationOwnerError,
+export function serializePreviewAutomationHostError(
+  error: PreviewAutomationHostError,
 ): NonNullable<PreviewAutomationResponse["error"]> {
   const detail = Object.fromEntries(
     Object.entries(error).filter(
