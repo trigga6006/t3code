@@ -152,7 +152,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
   }, [tabId]);
 
   const handleViewportChange = useCallback(
-    async (nextViewport: PreviewViewportSetting) => {
+    async (nextViewport: PreviewViewportSetting, signal: AbortSignal) => {
       if (!tabId) return;
       const result = await resize({
         environmentId: threadRef.environmentId,
@@ -162,6 +162,7 @@ export function PreviewView({ threadRef, tabId: requestedTabId, configuredUrls, 
           viewport: nextViewport,
         },
       });
+      if (signal.aborted) return;
       if (result._tag === "Failure") {
         const error = squashAtomCommandFailure(result);
         toastManager.add({

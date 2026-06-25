@@ -1,6 +1,9 @@
 import type { PreviewViewportSetting } from "@t3tools/contracts";
 
-type BrowserViewportHandler = (setting: PreviewViewportSetting) => Promise<void>;
+type BrowserViewportHandler = (
+  setting: PreviewViewportSetting,
+  signal: AbortSignal,
+) => Promise<void>;
 
 export const BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS = 15_000;
 
@@ -20,14 +23,18 @@ const runHandlerWithTimeout = (
   handler: BrowserViewportHandler,
   setting: PreviewViewportSetting,
 ): Promise<void> => {
+  const controller = new AbortController();
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = setTimeout(
-      () => reject(new BrowserViewportCommitTimeoutError(tabId)),
-      BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS,
-    );
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new BrowserViewportCommitTimeoutError(tabId));
+    }, BROWSER_VIEWPORT_COMMIT_TIMEOUT_MS);
   });
-  return Promise.race([Promise.resolve().then(() => handler(setting)), timeout]).finally(() => {
+  return Promise.race([
+    Promise.resolve().then(() => handler(setting, controller.signal)),
+    timeout,
+  ]).finally(() => {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
   });
 };

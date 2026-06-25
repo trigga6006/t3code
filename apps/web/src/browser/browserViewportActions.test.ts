@@ -21,7 +21,10 @@ describe("browserViewportActions", () => {
       height: 700,
     });
     expect(first).not.toHaveBeenCalled();
-    expect(second).toHaveBeenCalledWith({ _tag: "freeform", width: 900, height: 700 });
+    expect(second).toHaveBeenCalledWith(
+      { _tag: "freeform", width: 900, height: 700 },
+      expect.any(AbortSignal),
+    );
 
     unsubscribeSecond();
     await expect(
@@ -75,7 +78,9 @@ describe("browserViewportActions", () => {
     vi.useFakeTimers();
     try {
       const never = new Promise<void>(() => undefined);
-      const handler = vi.fn(async (_setting: PreviewViewportSetting): Promise<void> => undefined);
+      const handler = vi.fn(
+        async (_setting: PreviewViewportSetting, _signal: AbortSignal): Promise<void> => undefined,
+      );
       handler.mockImplementationOnce(() => never).mockResolvedValueOnce(undefined);
       const unsubscribe = subscribeBrowserViewportChange("tab-timeout", handler);
       const first = commitBrowserViewportChange("tab-timeout", {
@@ -97,7 +102,11 @@ describe("browserViewportActions", () => {
       await second;
 
       expect(handler).toHaveBeenCalledTimes(2);
+      expect(handler.mock.calls[0]?.[1]).toBeInstanceOf(AbortSignal);
+      expect((handler.mock.calls[0]?.[1] as AbortSignal).aborted).toBe(true);
       expect(handler.mock.calls[1]?.[0]).toMatchObject({ width: 900, height: 700 });
+      expect(handler.mock.calls[1]?.[1]).toBeInstanceOf(AbortSignal);
+      expect((handler.mock.calls[1]?.[1] as AbortSignal).aborted).toBe(false);
       unsubscribe();
     } finally {
       vi.useRealTimers();
