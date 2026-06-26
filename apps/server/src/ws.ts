@@ -33,6 +33,7 @@ import {
   OrchestrationGetFullThreadDiffError,
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
+  OrchestrationGetUsageAnalyticsError,
   ORCHESTRATION_WS_METHODS,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
@@ -281,6 +282,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.replayEvents, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.getUsageAnalytics, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
@@ -1105,6 +1107,23 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 (cause) =>
                   new OrchestrationGetSnapshotError({
                     message: "Failed to load archived orchestration shell snapshot",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getUsageAnalytics]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getUsageAnalytics,
+            projectionSnapshotQuery.getUsageAnalytics(input).pipe(
+              Effect.tapError((cause) =>
+                Effect.logError("orchestration usage analytics load failed", { cause }),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetUsageAnalyticsError({
+                    message: "Failed to load usage analytics",
                     cause,
                   }),
               ),

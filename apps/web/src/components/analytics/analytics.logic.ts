@@ -1,0 +1,231 @@
+import type {
+  ServerProvider,
+  UsageAnalyticsTimeRange,
+  UsageDailyCount,
+  UsageDailyTokens,
+} from "@t3tools/contracts";
+
+import { getDisplayModelName, type ModelEsque } from "../chat/providerIconUtils";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Approx. token count of Jane Austen's "Pride and Prejudice" (~122k words). */
+const PRIDE_AND_PREJUDICE_TOKENS = 160_000;
+
+// --- number / label formatting --------------------------------------------
+
+/** Thousands-separated integer, e.g. 161016 -> "161,016". */
+export function formatCount(value: number): string {
+  return Math.max(0, Math.round(value)).toLocaleString("en-US");
+}
+
+/** Compact token count keeping one decimal for k/M, e.g. 139_900_000 -> "139.9M". */
+export function formatCompactTokens(value: number): string {
+  const n = Math.max(0, Math.round(value));
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${n}`;
+}
+
+/** "12.5M in · 76.0M out" */
+export function formatTokensInOut(inputTokens: number, outputTokens: number): string {
+  return `${formatCompactTokens(inputTokens)} in · ${formatCompactTokens(outputTokens)} out`;
+}
+
+export function formatStreak(days: number): string {
+  return `${Math.max(0, Math.round(days))}d`;
+}
+
+export function formatPercentage(value: number): string {
+  return `${value.toFixed(1)}%`;
+}
+
+/** Playful comparison line, or null when there isn't enough usage to brag about. */
+export function prideAndPrejudiceComparison(totalTokens: number): string | null {
+  if (totalTokens <= 0) return null;
+  const ratio = totalTokens / PRIDE_AND_PREJUDICE_TOKENS;
+  if (ratio < 1) return null;
+  return `You've used ~${formatCount(Math.round(ratio))}× more tokens than Pride and Prejudice.`;
+}
+
+// --- UTC date helpers (server buckets days/hours in UTC) --------------------
+
+function toUtcMs(date: string): number {
+  return Date.parse(`${date}T00:00:00.000Z`);
+}
+
+function fromUtcMs(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+export function addDays(date: string, delta: number): string {
+  return fromUtcMs(toUtcMs(date) + delta * DAY_MS);
+}
+
+function weekdayUtc(date: string): number {
+  return new Date(toUtcMs(date)).getUTCDay(); // 0 = Sunday
+}
+
+/** Inclusive list of ISO dates from `startDate` to `endDate`. */
+export function eachDay(startDate: string, endDate: string): string[] {
+  const out: string[] = [];
+  const end = toUtcMs(endDate);
+  for (let ms = toUtcMs(startDate); ms <= end; ms += DAY_MS) {
+    out.push(fromUtcMs(ms));
+  }
+  return out;
+}
+
+export function formatMonthDay(date: string): string {
+  return new Date(toUtcMs(date)).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+// --- activity heatmap ------------------------------------------------------
+
+export interface HeatmapCell {
+  readonly date: string;
+  readonly count: number;
+}
+
+export interface HeatmapData {
+  /** Columns of (up to) 7 cells, Sunday-first; null entries are calendar padding. */
+  readonly weeks: ReadonlyArray<ReadonlyArray<HeatmapCell | null>>;
+  readonly maxCount: number;
+}
+
+function heatmapWindowStart(
+  dailyActivity: ReadonlyArray<UsageDailyCount>,
+  timeRange: UsageAnalyticsTimeRange,
+  end: string,
+): string {
+  if (timeRange === "7d") return addDays(end, -6);
+  if (timeRange === "30d") return addDays(end, -29);
+  // "all": show up to ~1 year, starting at the earliest active day (capped).
+  const earliest = dailyActivity.reduce<string | null>(
+    (min, day) => (min === null || day.date < min ? day.date : min),
+    null,
+  );
+  if (earliest === null) return addDays(end, -29);
+  const cap = addDays(end, -364);
+  return earliest > cap ? earliest : cap;
+}
+
+export function buildHeatmap(
+  dailyActivity: ReadonlyArray<UsageDailyCount>,
+  timeRange: UsageAnalyticsTimeRange,
+  today: string,
+): HeatmapData {
+  const countByDate = new Map<string, number>();
+  for (const day of dailyActivity) countByDate.set(day.date, day.count);
+
+  const start = heatmapWindowStart(dailyActivity, timeRange, today);
+  // Pad back to the preceding Sunday so each column is a full week.
+  const paddedStart = addDays(start, -weekdayUtc(start));
+
+  const weeks: (HeatmapCell | null)[][] = [];
+  let current: (HeatmapCell | null)[] = [];
+  let maxCount = 0;
+  for (const date of eachDay(paddedStart, today)) {
+    if (date >= start && date <= today) {
+      const count = countByDate.get(date) ?? 0;
+      if (count > maxCount) maxCount = count;
+      current.push({ date, count });
+    } else {
+      current.push(null);
+    }
+    if (current.length === 7) {
+      weeks.push(current);
+      current = [];
+    }
+  }
+  if (current.length > 0) {
+    while (current.length < 7) current.push(null);
+    weeks.push(current);
+  }
+  return { weeks, maxCount };
+}
+
+export function heatmapLevel(count: number, maxCount: number): 0 | 1 | 2 | 3 | 4 {
+  if (count <= 0 || maxCount <= 0) return 0;
+  const ratio = count / maxCount;
+  if (ratio > 0.75) return 4;
+  if (ratio > 0.5) return 3;
+  if (ratio > 0.25) return 2;
+  return 1;
+}
+
+// --- tokens-over-time bar buckets ------------------------------------------
+
+export interface TokenBucket {
+  readonly date: string;
+  readonly tokens: number;
+}
+
+/**
+ * Even-spaced token buckets for the bar chart. Daily bars for short windows;
+ * weekly buckets once the window grows past ~45 days so the chart stays legible.
+ */
+export function buildTokenBuckets(
+  dailyTokens: ReadonlyArray<UsageDailyTokens>,
+  timeRange: UsageAnalyticsTimeRange,
+  today: string,
+): TokenBucket[] {
+  const tokensByDate = new Map<string, number>();
+  for (const day of dailyTokens) tokensByDate.set(day.date, day.tokens);
+
+  let start: string;
+  if (timeRange === "7d") start = addDays(today, -6);
+  else if (timeRange === "30d") start = addDays(today, -29);
+  else {
+    const earliest = dailyTokens.reduce<string | null>(
+      (min, day) => (min === null || day.date < min ? day.date : min),
+      null,
+    );
+    start = earliest ?? addDays(today, -29);
+  }
+
+  const days = eachDay(start, today);
+  if (days.length <= 45) {
+    return days.map((date) => ({ date, tokens: tokensByDate.get(date) ?? 0 }));
+  }
+  const buckets: TokenBucket[] = [];
+  for (let i = 0; i < days.length; i += 7) {
+    const slice = days.slice(i, i + 7);
+    const tokens = slice.reduce((sum, date) => sum + (tokensByDate.get(date) ?? 0), 0);
+    buckets.push({ date: slice[0]!, tokens });
+  }
+  return buckets;
+}
+
+// --- model slug -> display name -------------------------------------------
+
+/**
+ * Build a resolver mapping a stored model slug (e.g. "claude-opus-4-8") to a
+ * friendly label (e.g. "Opus 4.8") using the server's provider model metadata.
+ * Falls back to the raw slug when no match is found.
+ */
+export function buildModelNameResolver(
+  providers: ReadonlyArray<ServerProvider>,
+): (slug: string) => string {
+  const bySlug = new Map<string, ModelEsque>();
+  for (const provider of providers) {
+    for (const model of provider.models) {
+      if (!bySlug.has(model.slug)) {
+        bySlug.set(model.slug, {
+          slug: model.slug,
+          name: model.name,
+          shortName: model.shortName ?? undefined,
+          subProvider: model.subProvider ?? undefined,
+        });
+      }
+    }
+  }
+  return (slug: string) => {
+    const model = bySlug.get(slug);
+    return model ? getDisplayModelName(model, { preferShortName: true }) : slug;
+  };
+}

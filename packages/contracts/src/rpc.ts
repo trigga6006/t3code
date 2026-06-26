@@ -54,6 +54,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   OrchestrationGetTurnDiffInput,
+  OrchestrationGetUsageAnalyticsError,
   OrchestrationReplayEventsError,
   OrchestrationReplayEventsInput,
   OrchestrationRpcSchemas,
@@ -627,6 +628,15 @@ export const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetUsageAnalyticsRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getUsageAnalytics,
+  {
+    payload: OrchestrationRpcSchemas.getUsageAnalytics.input,
+    success: OrchestrationRpcSchemas.getUsageAnalytics.output,
+    error: Schema.Union([OrchestrationGetUsageAnalyticsError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subscribeShell, {
   payload: OrchestrationRpcSchemas.subscribeShell.input,
   success: OrchestrationRpcSchemas.subscribeShell.output,
@@ -746,6 +756,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationReplayEventsRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
+  WsOrchestrationGetUsageAnalyticsRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
 );

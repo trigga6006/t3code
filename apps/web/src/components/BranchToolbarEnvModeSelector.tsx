@@ -1,20 +1,7 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
-import { memo, useMemo } from "react";
+import { CheckIcon, FolderGit2Icon } from "lucide-react";
+import { memo } from "react";
 
-import {
-  resolveCurrentWorkspaceLabel,
-  resolveEnvModeLabel,
-  resolveLockedWorkspaceLabel,
-  type EnvMode,
-} from "./BranchToolbar.logic";
-import {
-  Select,
-  SelectGroup,
-  SelectGroupLabel,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-} from "./ui/select";
+import { type EnvMode } from "./BranchToolbar.logic";
 
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
@@ -23,84 +10,53 @@ interface BranchToolbarEnvModeSelectorProps {
   onEnvModeChange: (mode: EnvMode) => void;
 }
 
+/** Small square that mirrors the app checkbox look, reflecting the `checked` state. */
+function WorktreeCheckboxBox({ checked, muted }: { checked: boolean; muted?: boolean }) {
+  return (
+    <span
+      aria-hidden
+      data-checked={checked || undefined}
+      className={`relative flex size-3.5 shrink-0 items-center justify-center rounded-[.25rem] border border-input bg-background text-primary-foreground transition-colors data-checked:border-primary data-checked:bg-primary${
+        muted ? " opacity-70" : ""
+      }`}
+    >
+      {checked ? <CheckIcon className="size-2.5" strokeWidth={3} /> : null}
+    </span>
+  );
+}
+
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
   envLocked,
   effectiveEnvMode,
   activeWorktreePath,
   onEnvModeChange,
 }: BranchToolbarEnvModeSelectorProps) {
-  const envModeItems = useMemo(
-    () => [
-      { value: "local", label: resolveCurrentWorkspaceLabel(activeWorktreePath) },
-      { value: "worktree", label: resolveEnvModeLabel("worktree") },
-    ],
-    [activeWorktreePath],
-  );
+  const isWorktree = effectiveEnvMode === "worktree";
 
   if (envLocked) {
+    // Read-only: the selection is frozen, so just reflect the current state.
+    const lockedChecked = isWorktree || activeWorktreePath !== null;
     return (
-      <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
-        {activeWorktreePath ? (
-          <>
-            <FolderGitIcon className="size-3" />
-            {resolveLockedWorkspaceLabel(activeWorktreePath)}
-          </>
-        ) : (
-          <>
-            <FolderIcon className="size-3" />
-            {resolveLockedWorkspaceLabel(activeWorktreePath)}
-          </>
-        )}
+      <span className="inline-flex h-7 shrink-0 select-none items-center gap-1.5 px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 sm:h-6 sm:text-xs">
+        <WorktreeCheckboxBox checked={lockedChecked} muted />
+        <FolderGit2Icon className="size-3" />
+        <span>Worktree</span>
       </span>
     );
   }
 
   return (
-    <Select
-      modal={false}
-      value={effectiveEnvMode}
-      onValueChange={(value) => onEnvModeChange(value as EnvMode)}
-      items={envModeItems}
+    <button
+      type="button"
+      aria-pressed={isWorktree}
+      aria-label={`Worktree ${isWorktree ? "enabled" : "disabled"}`}
+      title="Run this thread in a new git worktree"
+      onClick={() => onEnvModeChange(isWorktree ? "local" : "worktree")}
+      className="inline-flex h-7 shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-md px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/80 outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background sm:h-6 sm:text-xs"
     >
-      <SelectTrigger
-        variant="ghost"
-        size="xs"
-        className="font-medium"
-        aria-label={`Workspace: ${
-          effectiveEnvMode === "worktree"
-            ? resolveEnvModeLabel("worktree")
-            : resolveCurrentWorkspaceLabel(activeWorktreePath)
-        }`}
-      >
-        {effectiveEnvMode === "worktree" ? (
-          <FolderGit2Icon className="size-3" />
-        ) : activeWorktreePath ? (
-          <FolderGitIcon className="size-3" />
-        ) : (
-          <FolderIcon className="size-3" />
-        )}
-      </SelectTrigger>
-      <SelectPopup>
-        <SelectGroup>
-          <SelectGroupLabel>Workspace</SelectGroupLabel>
-          <SelectItem value="local">
-            <span className="inline-flex items-center gap-1.5">
-              {activeWorktreePath ? (
-                <FolderGitIcon className="size-3" />
-              ) : (
-                <FolderIcon className="size-3" />
-              )}
-              {resolveCurrentWorkspaceLabel(activeWorktreePath)}
-            </span>
-          </SelectItem>
-          <SelectItem value="worktree">
-            <span className="inline-flex items-center gap-1.5">
-              <FolderGit2Icon className="size-3" />
-              {resolveEnvModeLabel("worktree")}
-            </span>
-          </SelectItem>
-        </SelectGroup>
-      </SelectPopup>
-    </Select>
+      <WorktreeCheckboxBox checked={isWorktree} />
+      <FolderGit2Icon className="size-3" />
+      <span>Worktree</span>
+    </button>
   );
 });

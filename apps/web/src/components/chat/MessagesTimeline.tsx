@@ -38,6 +38,7 @@ import {
   resolveFileDiffPath,
 } from "../../lib/diffRendering";
 import ChatMarkdown from "../ChatMarkdown";
+import { UsageAnalyticsDashboard } from "../analytics/UsageAnalyticsDashboard";
 import {
   BotIcon,
   CheckIcon,
@@ -354,13 +355,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
 
   if (rows.length === 0 && !isWorking) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-sm text-muted-foreground/30">
-          Send a message to start the conversation.
-        </p>
-      </div>
-    );
+    // Empty thread with a project selected: surface the usage-analytics
+    // dashboard in place of the bare "send a message" placeholder.
+    return <UsageAnalyticsDashboard environmentId={activeThreadEnvironmentId} />;
   }
 
   return (

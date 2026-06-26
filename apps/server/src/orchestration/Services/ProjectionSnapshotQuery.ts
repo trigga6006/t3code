@@ -17,6 +17,8 @@ import type {
   OrchestrationThreadShell,
   ProjectId,
   ThreadId,
+  UsageAnalyticsInput,
+  UsageAnalyticsSummary,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -157,6 +159,15 @@ export interface ProjectionSnapshotQueryShape {
   readonly getThreadDetailById: (
     threadId: ThreadId,
   ) => Effect.Effect<Option.Option<OrchestrationThread>, ProjectionRepositoryError>;
+
+  /**
+   * Aggregate device-wide usage analytics (across all projects/threads) for the
+   * requested time range: session/message/token counts, per-model token
+   * breakdown, daily activity, peak hour, and streaks.
+   */
+  readonly getUsageAnalytics: (
+    input: UsageAnalyticsInput,
+  ) => Effect.Effect<UsageAnalyticsSummary, ProjectionRepositoryError>;
 }
 
 /**

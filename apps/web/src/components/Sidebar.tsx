@@ -20,6 +20,7 @@ import {
   ThreadWorktreeIndicator,
 } from "./ThreadStatusIndicators";
 import { ProjectFavicon } from "./ProjectFavicon";
+import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
 import { useAtomValue } from "@effect/atom-react";
 import { autoAnimate } from "@formkit/auto-animate";
 import React, { useCallback, useEffect, memo, useMemo, useRef, useState } from "react";
@@ -43,6 +44,8 @@ import {
   type ContextMenuItem,
   DEFAULT_SERVER_SETTINGS,
   ProjectId,
+  PROVIDER_DISPLAY_NAMES,
+  type ProviderDriverKind,
   type ScopedThreadRef,
   type ResolvedKeybindingsConfig,
   type SidebarProjectGroupingMode,
@@ -399,6 +402,23 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
   const remoteEnvLabel = environment?.label ?? null;
   const threadEnvironmentLabel = isRemoteThread ? (remoteEnvLabel ?? "Remote") : null;
+  // Resolve the provider driver kind backing this thread so we can show its
+  // logo at the trailing edge of the row. The thread's model selection routes
+  // by `instanceId`; the owning environment's provider snapshot maps that
+  // instance back to its driver kind (which keys the brand-icon registry).
+  const serverConfigs = useServerConfigs();
+  const providerDriverKind = useMemo<ProviderDriverKind | null>(() => {
+    const providers = serverConfigs.get(thread.environmentId)?.providers;
+    if (!providers) return null;
+    const instanceId = thread.modelSelection.instanceId;
+    return providers.find((provider) => provider.instanceId === instanceId)?.driver ?? null;
+  }, [serverConfigs, thread.environmentId, thread.modelSelection.instanceId]);
+  const ProviderLogo = providerDriverKind
+    ? (PROVIDER_ICON_BY_PROVIDER[providerDriverKind] ?? null)
+    : null;
+  const providerLabel = providerDriverKind
+    ? (PROVIDER_DISPLAY_NAMES[providerDriverKind] ?? null)
+    : null;
   // For grouped projects, the thread may belong to a different environment
   // than the representative project.  Look up the thread's own project cwd
   // so git status (and thus PR detection) queries the correct path.
@@ -862,6 +882,21 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
                       thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
                     )}
                   </span>
+                )}
+                {ProviderLogo && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span
+                          aria-label={providerLabel ?? "Provider"}
+                          className="inline-flex items-center justify-center"
+                        />
+                      }
+                    >
+                      <ProviderLogo className="size-3.5 shrink-0 opacity-80" aria-hidden />
+                    </TooltipTrigger>
+                    {providerLabel && <TooltipPopup side="top">{providerLabel}</TooltipPopup>}
+                  </Tooltip>
                 )}
               </span>
             </span>

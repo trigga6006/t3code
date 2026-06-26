@@ -23,8 +23,13 @@ import {
   ModelSelection,
   ProjectId,
   ThreadId,
+  type UsageAnalyticsInput,
+  type UsageAnalyticsSummary,
+  type UsageAnalyticsTimeRange,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -107,6 +112,79 @@ const ProjectionCountsRowSchema = Schema.Struct({
   projectCount: Schema.Number,
   threadCount: Schema.Number,
 });
+
+// --- Usage-analytics query inputs/rows + pure helpers ----------------------
+const UsageCutoffInput = Schema.Struct({ cutoff: Schema.String });
+const UsageScalarCountRowSchema = Schema.Struct({ count: Schema.Number });
+const UsageModelTokenRowSchema = Schema.Struct({
+  model: Schema.NullOr(Schema.String),
+  inputTokens: Schema.Number,
+  outputTokens: Schema.Number,
+});
+const UsageDayTokensRowSchema = Schema.Struct({
+  day: Schema.String,
+  tokens: Schema.Number,
+});
+const UsageDayCountRowSchema = Schema.Struct({
+  day: Schema.String,
+  count: Schema.Number,
+});
+const UsageHourCountRowSchema = Schema.Struct({
+  hour: Schema.String,
+  count: Schema.Number,
+});
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Lower-bound ISO timestamp for a time range. "all" uses the epoch floor. */
+function usageCutoffForRange(timeRange: UsageAnalyticsTimeRange, nowMs: number): string {
+  if (timeRange === "all") return "0000-01-01T00:00:00.000Z";
+  const days = timeRange === "7d" ? 7 : 30;
+  return DateTime.formatIso(DateTime.makeUnsafe(nowMs - days * DAY_MS));
+}
+
+/** True when ISO date `b` (YYYY-MM-DD) is exactly one calendar day after `a`. */
+function isNextUtcDay(a: string, b: string): boolean {
+  const da = Date.parse(`${a}T00:00:00.000Z`);
+  const db = Date.parse(`${b}T00:00:00.000Z`);
+  return Number.isFinite(da) && Number.isFinite(db) && db - da === DAY_MS;
+}
+
+/**
+ * Compute the longest run of consecutive active days, and the current run that
+ * ends at the most recent active day (only counted as "current" when that day
+ * is today or yesterday in UTC).
+ */
+function computeUsageStreaks(
+  activeDays: ReadonlyArray<string>,
+  todayUtc: string,
+): { current: number; longest: number } {
+  if (activeDays.length === 0) return { current: 0, longest: 0 };
+  const sorted = Array.from(new Set(activeDays)).sort();
+  let longest = 1;
+  let run = 1;
+  for (let i = 1; i < sorted.length; i++) {
+    run = isNextUtcDay(sorted[i - 1]!, sorted[i]!) ? run + 1 : 1;
+    if (run > longest) longest = run;
+  }
+  const last = sorted[sorted.length - 1]!;
+  let current = 0;
+  if (last === todayUtc || isNextUtcDay(last, todayUtc)) {
+    current = 1;
+    for (let i = sorted.length - 1; i > 0; i--) {
+      if (isNextUtcDay(sorted[i - 1]!, sorted[i]!)) current++;
+      else break;
+    }
+  }
+  return { current, longest };
+}
+
+/** Format a 24h hour (0-23) as a "11 PM" style label. */
+function formatUsageHour(hour24: number): string {
+  const period = hour24 < 12 ? "AM" : "PM";
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  return `${hour12} ${period}`;
+}
 const WorkspaceRootLookupInput = Schema.Struct({
   workspaceRoot: Schema.String,
 });
@@ -654,6 +732,119 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           (SELECT COUNT(*) FROM projection_projects) AS "projectCount",
           (SELECT COUNT(*) FROM projection_threads) AS "threadCount"
+      `,
+  });
+
+  // --- Usage-analytics aggregation queries (device-wide, time-ranged) ------
+  const readUsageSessionCount = SqlSchema.findOne({
+    Request: UsageCutoffInput,
+    Result: UsageScalarCountRowSchema,
+    execute: ({ cutoff }) =>
+      sql`
+        SELECT COUNT(*) AS "count"
+        FROM projection_threads
+        WHERE deleted_at IS NULL
+          AND created_at >= ${cutoff}
+      `,
+  });
+
+  const readUsageMessageCount = SqlSchema.findOne({
+    Request: UsageCutoffInput,
+    Result: UsageScalarCountRowSchema,
+    execute: ({ cutoff }) =>
+      sql`
+        SELECT COUNT(*) AS "count"
+        FROM projection_thread_messages
+        WHERE created_at >= ${cutoff}
+      `,
+  });
+
+  // Token deltas (lastInput/lastOutput) are per-turn. Providers may emit several
+  // context-window updates within a turn, so collapse to the final snapshot per
+  // (thread, turn) — via ROW_NUMBER() rn=1 — before summing to avoid double counting.
+  const listUsageModelTokenRows = SqlSchema.findAll({
+    Request: UsageCutoffInput,
+    Result: UsageModelTokenRowSchema,
+    execute: ({ cutoff }) =>
+      sql`
+        WITH ranked_token_usage AS (
+          SELECT
+            a.thread_id AS thread_id,
+            CAST(json_extract(a.payload_json, '$.lastInputTokens') AS INTEGER) AS input_tokens,
+            CAST(json_extract(a.payload_json, '$.lastOutputTokens') AS INTEGER) AS output_tokens,
+            ROW_NUMBER() OVER (
+              PARTITION BY a.thread_id, a.turn_id
+              ORDER BY a.sequence DESC, a.created_at DESC, a.activity_id DESC
+            ) AS rn
+          FROM projection_thread_activities a
+          WHERE a.kind = 'context-window.updated'
+            AND a.created_at >= ${cutoff}
+        )
+        SELECT
+          json_extract(t.model_selection_json, '$.model') AS "model",
+          COALESCE(SUM(r.input_tokens), 0) AS "inputTokens",
+          COALESCE(SUM(r.output_tokens), 0) AS "outputTokens"
+        FROM ranked_token_usage r
+        JOIN projection_threads t ON t.thread_id = r.thread_id
+        WHERE r.rn = 1
+        GROUP BY "model"
+      `,
+  });
+
+  const listUsageTokensPerDay = SqlSchema.findAll({
+    Request: UsageCutoffInput,
+    Result: UsageDayTokensRowSchema,
+    execute: ({ cutoff }) =>
+      sql`
+        WITH ranked_token_usage AS (
+          SELECT
+            substr(a.created_at, 1, 10) AS day,
+            CAST(json_extract(a.payload_json, '$.lastInputTokens') AS INTEGER) AS input_tokens,
+            CAST(json_extract(a.payload_json, '$.lastOutputTokens') AS INTEGER) AS output_tokens,
+            ROW_NUMBER() OVER (
+              PARTITION BY a.thread_id, a.turn_id
+              ORDER BY a.sequence DESC, a.created_at DESC, a.activity_id DESC
+            ) AS rn
+          FROM projection_thread_activities a
+          WHERE a.kind = 'context-window.updated'
+            AND a.created_at >= ${cutoff}
+        )
+        SELECT
+          r.day AS "day",
+          COALESCE(SUM(r.input_tokens), 0) + COALESCE(SUM(r.output_tokens), 0) AS "tokens"
+        FROM ranked_token_usage r
+        WHERE r.rn = 1
+        GROUP BY r.day
+        ORDER BY r.day ASC
+      `,
+  });
+
+  const listUsageMessagesPerDay = SqlSchema.findAll({
+    Request: UsageCutoffInput,
+    Result: UsageDayCountRowSchema,
+    execute: ({ cutoff }) =>
+      sql`
+        SELECT
+          substr(created_at, 1, 10) AS "day",
+          COUNT(*) AS "count"
+        FROM projection_thread_messages
+        WHERE created_at >= ${cutoff}
+        GROUP BY "day"
+        ORDER BY "day" ASC
+      `,
+  });
+
+  const listUsageMessagesPerHour = SqlSchema.findAll({
+    Request: UsageCutoffInput,
+    Result: UsageHourCountRowSchema,
+    execute: ({ cutoff }) =>
+      sql`
+        SELECT
+          substr(created_at, 12, 2) AS "hour",
+          COUNT(*) AS "count"
+        FROM projection_thread_messages
+        WHERE created_at >= ${cutoff}
+        GROUP BY "hour"
       `,
   });
 
@@ -1704,6 +1895,89 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const getUsageAnalytics: ProjectionSnapshotQueryShape["getUsageAnalytics"] = (
+    input: UsageAnalyticsInput,
+  ) =>
+    Effect.gen(function* () {
+      const nowMs = yield* Clock.currentTimeMillis;
+      const cutoff = usageCutoffForRange(input.timeRange, nowMs);
+      const todayUtc = DateTime.formatIso(DateTime.makeUnsafe(nowMs)).slice(0, 10);
+      const mapError = toPersistenceSqlOrDecodeError(
+        "ProjectionSnapshotQuery.getUsageAnalytics:query",
+        "ProjectionSnapshotQuery.getUsageAnalytics:decodeRow",
+      );
+
+      const [sessionRow, messageRow, modelRows, tokenDayRows, msgDayRows, msgHourRows] =
+        yield* Effect.all([
+          readUsageSessionCount({ cutoff }).pipe(Effect.mapError(mapError)),
+          readUsageMessageCount({ cutoff }).pipe(Effect.mapError(mapError)),
+          listUsageModelTokenRows({ cutoff }).pipe(Effect.mapError(mapError)),
+          listUsageTokensPerDay({ cutoff }).pipe(Effect.mapError(mapError)),
+          listUsageMessagesPerDay({ cutoff }).pipe(Effect.mapError(mapError)),
+          listUsageMessagesPerHour({ cutoff }).pipe(Effect.mapError(mapError)),
+        ]);
+
+      const dailyTokens = tokenDayRows.map((row) => ({
+        date: row.day,
+        tokens: Math.max(0, Math.round(row.tokens)),
+      }));
+      const totalTokens = dailyTokens.reduce((sum, day) => sum + day.tokens, 0);
+
+      const modelBreakdown = modelRows
+        .flatMap((row) => {
+          if (row.model == null || row.model.length === 0) return [];
+          const inputTokens = Math.max(0, Math.round(row.inputTokens));
+          const outputTokens = Math.max(0, Math.round(row.outputTokens));
+          const total = inputTokens + outputTokens;
+          if (total === 0) return [];
+          return [{ model: row.model, inputTokens, outputTokens, total }];
+        })
+        .sort((a, b) => b.total - a.total)
+        .map((row) => ({
+          model: row.model,
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          percentage: totalTokens > 0 ? (row.total / totalTokens) * 100 : 0,
+        }));
+      const favoriteModel = modelBreakdown.length > 0 ? modelBreakdown[0]!.model : null;
+
+      const dailyActivity = msgDayRows.map((row) => ({
+        date: row.day,
+        count: Math.max(0, Math.round(row.count)),
+      }));
+      const activeDayDates = dailyActivity.filter((day) => day.count > 0).map((day) => day.date);
+      const activeDays = activeDayDates.length;
+      const { current: currentStreak, longest: longestStreak } = computeUsageStreaks(
+        activeDayDates,
+        todayUtc,
+      );
+
+      let peakHour: string | null = null;
+      let peakCount = -1;
+      for (const row of msgHourRows) {
+        const hour = Number.parseInt(row.hour, 10);
+        if (!Number.isFinite(hour)) continue;
+        if (row.count > peakCount) {
+          peakCount = row.count;
+          peakHour = formatUsageHour(hour);
+        }
+      }
+
+      return {
+        sessionCount: Math.max(0, Math.round(sessionRow.count)),
+        messageCount: Math.max(0, Math.round(messageRow.count)),
+        totalTokens,
+        activeDays,
+        currentStreak,
+        longestStreak,
+        peakHour,
+        favoriteModel,
+        modelBreakdown,
+        dailyActivity,
+        dailyTokens,
+      } satisfies UsageAnalyticsSummary;
+    });
+
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
     (workspaceRoot) =>
       getActiveProjectRowByWorkspaceRoot({ workspaceRoot }).pipe(
@@ -2047,6 +2321,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getFullThreadDiffContext,
     getThreadShellById,
     getThreadDetailById,
+    getUsageAnalytics,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

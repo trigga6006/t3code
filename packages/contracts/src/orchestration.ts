@@ -28,6 +28,7 @@ export const ORCHESTRATION_WS_METHODS = {
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  getUsageAnalytics: "orchestration.getUsageAnalytics",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
@@ -1225,6 +1226,55 @@ export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInp
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
 
+export const UsageAnalyticsTimeRange = Schema.Literals(["7d", "30d", "all"]);
+export type UsageAnalyticsTimeRange = typeof UsageAnalyticsTimeRange.Type;
+
+export const UsageAnalyticsInput = Schema.Struct({
+  timeRange: UsageAnalyticsTimeRange,
+});
+export type UsageAnalyticsInput = typeof UsageAnalyticsInput.Type;
+
+/** Per-model token usage row (input + output tokens attributed to a thread's model). */
+export const ModelTokenUsage = Schema.Struct({
+  model: TrimmedNonEmptyString,
+  inputTokens: NonNegativeInt,
+  outputTokens: NonNegativeInt,
+  /** Share of total tokens (0-100). */
+  percentage: Schema.Number,
+});
+export type ModelTokenUsage = typeof ModelTokenUsage.Type;
+
+/** Daily activity bucket keyed by ISO date (YYYY-MM-DD). */
+export const UsageDailyCount = Schema.Struct({
+  date: Schema.String,
+  count: NonNegativeInt,
+});
+export type UsageDailyCount = typeof UsageDailyCount.Type;
+
+/** Daily token bucket keyed by ISO date (YYYY-MM-DD). */
+export const UsageDailyTokens = Schema.Struct({
+  date: Schema.String,
+  tokens: NonNegativeInt,
+});
+export type UsageDailyTokens = typeof UsageDailyTokens.Type;
+
+export const UsageAnalyticsSummary = Schema.Struct({
+  sessionCount: NonNegativeInt,
+  messageCount: NonNegativeInt,
+  totalTokens: NonNegativeInt,
+  activeDays: NonNegativeInt,
+  currentStreak: NonNegativeInt,
+  longestStreak: NonNegativeInt,
+  /** Formatted local-agnostic hour label (e.g. "11 PM"), or null when there is no data. */
+  peakHour: Schema.NullOr(Schema.String),
+  /** Model slug with the most tokens, or null when there is no data. */
+  favoriteModel: Schema.NullOr(TrimmedNonEmptyString),
+  modelBreakdown: Schema.Array(ModelTokenUsage),
+  dailyActivity: Schema.Array(UsageDailyCount),
+  dailyTokens: Schema.Array(UsageDailyTokens),
+});
+export type UsageAnalyticsSummary = typeof UsageAnalyticsSummary.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1245,6 +1295,10 @@ export const OrchestrationRpcSchemas = {
   getArchivedShellSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationShellSnapshot,
+  },
+  getUsageAnalytics: {
+    input: UsageAnalyticsInput,
+    output: UsageAnalyticsSummary,
   },
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,
@@ -1290,6 +1344,14 @@ export class OrchestrationGetFullThreadDiffError extends Schema.TaggedErrorClass
 
 export class OrchestrationReplayEventsError extends Schema.TaggedErrorClass<OrchestrationReplayEventsError>()(
   "OrchestrationReplayEventsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationGetUsageAnalyticsError extends Schema.TaggedErrorClass<OrchestrationGetUsageAnalyticsError>()(
+  "OrchestrationGetUsageAnalyticsError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

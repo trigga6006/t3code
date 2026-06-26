@@ -83,7 +83,7 @@ export const BranchToolbarContextDirs = memo(function BranchToolbarContextDirs({
         ) : (
           <span
             key={dir}
-            className="group inline-flex min-w-0 shrink items-center gap-1 rounded-md border border-border/50 bg-surface/50 py-0.5 pl-1.5 pr-0.5 text-xs font-medium text-muted-foreground/80"
+            className="group inline-flex min-w-0 shrink items-center gap-1 rounded-md border border-transparent py-0.5 pl-1.5 pr-0.5 text-xs font-medium text-muted-foreground/80 transition-colors hover:border-border/50 hover:bg-surface/50 focus-within:border-border/50 focus-within:bg-surface/50"
             title={dir}
           >
             <FolderIcon className="size-3 shrink-0" />
