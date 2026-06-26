@@ -14,7 +14,6 @@ import {
   SelectItem,
   SelectPopup,
   SelectTrigger,
-  SelectValue,
 } from "./ui/select";
 
 interface BranchToolbarEnvModeSelectorProps {
@@ -63,7 +62,16 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       onValueChange={(value) => onEnvModeChange(value as EnvMode)}
       items={envModeItems}
     >
-      <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Workspace">
+      <SelectTrigger
+        variant="ghost"
+        size="xs"
+        className="font-medium"
+        aria-label={`Workspace: ${
+          effectiveEnvMode === "worktree"
+            ? resolveEnvModeLabel("worktree")
+            : resolveCurrentWorkspaceLabel(activeWorktreePath)
+        }`}
+      >
         {effectiveEnvMode === "worktree" ? (
           <FolderGit2Icon className="size-3" />
         ) : activeWorktreePath ? (
@@ -71,7 +79,6 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         ) : (
           <FolderIcon className="size-3" />
         )}
-        <SelectValue />
       </SelectTrigger>
       <SelectPopup>
         <SelectGroup>

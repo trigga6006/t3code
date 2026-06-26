@@ -57,3 +57,21 @@ export function getTriggerDisplayModelName(model: ModelEsque): string {
 export function getTriggerDisplayModelLabel(model: ModelEsque): string {
   return getTriggerDisplayModelName(model);
 }
+
+/** Leading provider word to strip from the composer model trigger (logo conveys the provider). */
+const PROVIDER_QUALIFIER_BY_DRIVER: Partial<Record<ProviderDriverKind, string>> = {
+  [ProviderDriverKind.make("claudeAgent")]: "Claude",
+  [ProviderDriverKind.make("codex")]: "OpenAI",
+  [ProviderDriverKind.make("opencode")]: "OpenCode",
+  [ProviderDriverKind.make("cursor")]: "Cursor",
+  [ProviderDriverKind.make("grok")]: "Grok",
+};
+
+/** Composer trigger: short model name with the provider word stripped (e.g. "Opus 4.8"). */
+export function getComposerTriggerModelName(
+  model: ModelEsque,
+  driverKind?: ProviderDriverKind | null,
+): string {
+  const qualifier = driverKind ? PROVIDER_QUALIFIER_BY_DRIVER[driverKind] : undefined;
+  return stripLeadingQualifier(getTriggerDisplayModelName(model), qualifier);
+}

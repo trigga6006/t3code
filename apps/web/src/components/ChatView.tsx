@@ -164,6 +164,7 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import { useContextDirsStore } from "../contextDirsStore";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -3796,6 +3797,10 @@ function ChatViewContent(props: ChatViewProps) {
       ctxSelectedModel || activeProject.defaultModelSelection?.model || DEFAULT_MODEL,
       ctxSelectedModelSelection.options,
     );
+    // Extra context directories attached to this draft before its first send.
+    const contextDirsForSend = isLocalDraftThread
+      ? [...useContextDirsStore.getState().getDirs(threadIdForSend)]
+      : [];
 
     let failure: AtomCommandResult<unknown, unknown> | null = null;
     // Auto-title from first message
@@ -3845,6 +3850,9 @@ function ChatViewContent(props: ChatViewProps) {
                       interactionMode,
                       branch: activeThreadBranch,
                       worktreePath: activeThread.worktreePath,
+                      ...(contextDirsForSend.length > 0
+                        ? { additionalDirectories: contextDirsForSend }
+                        : {}),
                       createdAt: activeThread.createdAt,
                     },
                   }
@@ -3885,6 +3893,11 @@ function ChatViewContent(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        // The draft's context directories have been consumed by thread.create;
+        // drop them so the now-promoted server thread shows a static selection.
+        if (contextDirsForSend.length > 0) {
+          useContextDirsStore.getState().clearDirs(threadIdForSend);
+        }
       }
     }
 

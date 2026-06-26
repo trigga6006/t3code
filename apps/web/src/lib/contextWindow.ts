@@ -25,6 +25,29 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
+/** Baseline snapshot so the context meter can render before any usage is reported. */
+export const EMPTY_CONTEXT_WINDOW_SNAPSHOT: ContextWindowSnapshot = {
+  usedTokens: 0,
+  totalProcessedTokens: null,
+  maxTokens: null,
+  remainingTokens: null,
+  usedPercentage: 0,
+  remainingPercentage: null,
+  inputTokens: null,
+  cachedInputTokens: null,
+  outputTokens: null,
+  reasoningOutputTokens: null,
+  lastUsedTokens: null,
+  lastInputTokens: null,
+  lastCachedInputTokens: null,
+  lastOutputTokens: null,
+  lastReasoningOutputTokens: null,
+  toolUses: null,
+  durationMs: null,
+  compactsAutomatically: false,
+  updatedAt: "",
+};
+
 /** Map a provider driver kind to a user-facing display name. */
 export function formatProviderDisplayName(provider: string | null | undefined): string {
   if (!provider) return "This agent";

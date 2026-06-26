@@ -64,6 +64,7 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  --color-surface: var(--surface);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
   --radius-sm: calc(var(--radius) - 4px);
@@ -151,9 +152,12 @@
     padding-inline-end: calc(env(safe-area-inset-right) + 0.75rem);
   }
 
-  .chat-composer-glass,
+  .chat-composer-glass {
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+  }
+
   .chat-composer-lower-chrome {
-    background: color-mix(in srgb, var(--card) 20%, transparent);
+    background: transparent;
   }
 
   .chat-composer-glass {
@@ -167,9 +171,12 @@
     backdrop-filter: blur(16px);
   }
 
-  .dark .chat-composer-glass,
+  .dark .chat-composer-glass {
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+  }
+
   .dark .chat-composer-lower-chrome {
-    background: color-mix(in srgb, var(--card) 45%, transparent);
+    background: transparent;
   }
 
   .dark .chat-composer-glass {
@@ -192,9 +199,11 @@
   }
 
   @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-    .chat-composer-glass,
+    .chat-composer-glass {
+      background: var(--surface);
+    }
     .chat-composer-lower-chrome {
-      background: var(--card);
+      background: var(--background);
     }
   }
 }
@@ -231,6 +240,8 @@
   --app-chrome-background: var(--background);
   --foreground: var(--color-neutral-800);
   --card: var(--color-white);
+  /* Secondary surface — composer + sidebar. A neutral gray, slightly off the main bg. */
+  --surface: oklch(0.972 0 0);
   --card-foreground: var(--color-neutral-800);
   --popover: var(--color-white);
   --popover-foreground: var(--color-neutral-800);
@@ -260,6 +271,8 @@
     --app-chrome-background: var(--background);
     --foreground: var(--color-neutral-100);
     --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    /* Secondary surface — a neutral gray, only barely lifted off the main bg. */
+    --surface: color-mix(in srgb, var(--background) 95%, var(--color-white));
     --card-foreground: var(--color-neutral-100);
     --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
     --popover-foreground: var(--color-neutral-100);

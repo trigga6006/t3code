@@ -15,6 +15,7 @@ import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   ModelEsque,
   getTriggerDisplayModelLabel,
+  getComposerTriggerModelName,
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -64,7 +65,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModel =
     selectedInstanceOptions.find((option) => option.slug === props.model) ??
     selectedInstanceOptions[0];
-  const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
+  const triggerTitle = selectedModel
+    ? getComposerTriggerModelName(selectedModel, activeEntry?.driverKind)
+    : props.model;
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
   const duplicateDriverCount = props.instanceEntries.filter(
     (entry) => activeEntry !== null && entry.driverKind === activeEntry.driverKind,
@@ -150,8 +153,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             variant={props.triggerVariant ?? "ghost"}
             data-chat-provider-model-picker="true"
             className={cn(
-              "min-w-0 justify-between whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80",
-              props.compact ? "max-w-42 shrink-0" : "max-w-48 shrink sm:max-w-56 sm:px-3",
+              "h-7 min-w-0 justify-between whitespace-nowrap px-2 text-xs text-muted-foreground/70 hover:text-foreground/80",
+              props.compact ? "max-w-40 shrink-0" : "max-w-44 shrink sm:max-w-52 sm:px-2.5",
               props.triggerClassName,
             )}
             disabled={props.disabled}

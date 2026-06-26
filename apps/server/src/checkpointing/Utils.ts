@@ -26,3 +26,12 @@ export function resolveThreadWorkspaceCwd(input: {
 
   return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
 }
+
+/** Additional context directories bound to a thread's provider session (absolute paths). */
+export function resolveThreadAdditionalDirectories(input: {
+  readonly thread: {
+    readonly additionalDirectories?: ReadonlyArray<string> | undefined;
+  };
+}): ReadonlyArray<string> {
+  return input.thread.additionalDirectories ?? [];
+}

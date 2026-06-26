@@ -64,7 +64,7 @@ export const make = Effect.gen(function* () {
           httpBaseUrl: config.httpBaseUrl.href,
           credential: config.bootstrap.desktopBootstrapToken,
           clientMetadata: {
-            label: "T3 Code Desktop",
+            label: "OmniCode Desktop",
             deviceType: "desktop",
           },
         }).pipe(

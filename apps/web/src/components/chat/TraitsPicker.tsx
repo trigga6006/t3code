@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ZapIcon } from "lucide-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -359,7 +359,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
+  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled, fastModeEnabled } =
     getTraitsSectionVisibility({
       provider,
       models,
@@ -383,15 +383,13 @@ export const TraitsPicker = memo(function TraitsPicker({
 
   const triggerLabels: Array<string> = [];
   for (const descriptor of descriptors) {
+    // Fast Mode is surfaced as its own standalone toggle, not in the reasoning label.
+    if (descriptor.id === "fastMode") continue;
     const label =
       ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
         ? "Ultrathink"
         : descriptor.type === "boolean"
-          ? descriptor.id === "fastMode"
-            ? descriptor.currentValue === true
-              ? "Fast"
-              : "Normal"
-            : `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
+          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
           : getProviderOptionCurrentLabel(descriptor);
     if (typeof label === "string" && label.length > 0) {
       triggerLabels.push(label);
@@ -423,12 +421,18 @@ export const TraitsPicker = memo(function TraitsPicker({
         }
       >
         {isCodexStyle ? (
-          <span className="flex min-w-0 w-full items-center gap-2 overflow-hidden">
+          <span className="flex min-w-0 w-full items-center gap-1.5 overflow-hidden">
+            {fastModeEnabled ? (
+              <ZapIcon aria-label="Fast mode on" className="size-3 shrink-0 text-amber-400" />
+            ) : null}
             {triggerLabel}
             <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
           </span>
         ) : (
           <>
+            {fastModeEnabled ? (
+              <ZapIcon aria-label="Fast mode on" className="size-3 shrink-0 text-amber-400" />
+            ) : null}
             <span>{triggerLabel}</span>
             <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
           </>

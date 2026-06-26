@@ -38,6 +38,7 @@ import {
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { resolveClaudeNativeBinaryPath } from "../Drivers/ClaudeBinary.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -562,7 +563,10 @@ const probeClaudeCapabilities = (
         })(),
         options: {
           persistSession: false,
-          pathToClaudeCodeExecutable: claudeSettings.binaryPath,
+          pathToClaudeCodeExecutable: resolveClaudeNativeBinaryPath(
+            claudeSettings.binaryPath,
+            claudeEnvironment,
+          ),
           abortController: abort,
           settingSources: ["user", "project", "local"],
           allowedTools: [],
@@ -647,7 +651,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: "Claude is disabled in OmniCode settings.",
       },
     });
   }
@@ -806,7 +810,7 @@ export const makePendingClaudeProvider = (
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Claude is disabled in T3 Code settings.",
+          message: "Claude is disabled in OmniCode settings.",
         },
       });
     }

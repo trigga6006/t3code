@@ -25,7 +25,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
-import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
+import {
+  resolveThreadAdditionalDirectories,
+  resolveThreadWorkspaceCwd,
+} from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
@@ -470,6 +473,7 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    const additionalDirectories = resolveThreadAdditionalDirectories({ thread });
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
@@ -480,6 +484,7 @@ const make = Effect.gen(function* () {
         ...(preferredProvider ? { provider: preferredProvider } : {}),
         providerInstanceId: desiredInstanceId,
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
+        ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
         runtimeMode: desiredRuntimeMode,
