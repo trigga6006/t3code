@@ -23,6 +23,8 @@ import type {
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
 
+import type { NormalizedUsageWindow } from "../usageLimits.ts";
+
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 
 export interface ProviderAdapterCapabilities {
@@ -118,6 +120,16 @@ export interface ProviderAdapterShape<TError> {
    * Stop all sessions owned by this adapter.
    */
   readonly stopAll: () => Effect.Effect<void, TError>;
+
+  /**
+   * Read the account's current usage-limit windows on demand (5-hour + weekly),
+   * fetched fresh from the provider rather than relying on passively-captured
+   * runtime events. Optional: adapters that cannot pull live usage omit it, and
+   * callers feature-detect by presence. Best-effort — implementations should
+   * resolve to an empty array (never reject) when no live session/usage data is
+   * available so a usage read can never break a caller.
+   */
+  readonly readUsageLimits?: () => Effect.Effect<ReadonlyArray<NormalizedUsageWindow>, TError>;
 
   /**
    * Canonical runtime event stream emitted by this adapter.

@@ -34,7 +34,9 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   OrchestrationGetUsageAnalyticsError,
+  OrchestrationGetUsageLimitsError,
   ORCHESTRATION_WS_METHODS,
+  defaultInstanceIdForDriver,
   type ProjectEntriesFailure,
   type ProjectFileFailure,
   type ProjectFileOperation,
@@ -75,7 +77,9 @@ import {
   observeRpcStreamEffect as instrumentRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderService from "./provider/Services/ProviderService.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import { mergeProviderUsageLimits } from "./provider/usageLimitsMerge.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -283,6 +287,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.getUsageAnalytics, AuthOrchestrationReadScope],
+  [ORCHESTRATION_WS_METHODS.getUsageLimits, AuthOrchestrationReadScope],
   [ORCHESTRATION_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
   [WS_METHODS.serverGetConfig, AuthOrchestrationReadScope],
   [WS_METHODS.serverRefreshProviders, AuthOrchestrationOperateScope],
@@ -406,6 +411,7 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+      const providerService = yield* ProviderService.ProviderService;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig.ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
@@ -1124,6 +1130,45 @@ const makeWsRpcLayer = (currentSession: EnvironmentAuth.AuthenticatedSession) =>
                 (cause) =>
                   new OrchestrationGetUsageAnalyticsError({
                     message: "Failed to load usage analytics",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getUsageLimits]: (input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getUsageLimits,
+            Effect.gen(function* () {
+              // Persisted (passively-captured) snapshot is the base + fallback.
+              const persisted = yield* projectionSnapshotQuery.getUsageLimits(input);
+              const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+              // Overlay a fresh on-demand read per provider. Live reads are
+              // best-effort and strictly non-fatal: a provider error, missing
+              // capability, or slow/absent session must never fail the modal —
+              // it just falls back to the persisted window for that provider.
+              const providers = yield* Effect.forEach(persisted.providers, (entry) =>
+                providerService.readUsageLimits(defaultInstanceIdForDriver(entry.provider)).pipe(
+                  Effect.timeout("6 seconds"),
+                  Effect.catch((cause) =>
+                    Effect.logDebug("orchestration usage limits live read skipped", {
+                      cause,
+                      provider: entry.provider,
+                    }).pipe(Effect.as([])),
+                  ),
+                  Effect.map((live) => mergeProviderUsageLimits({ persisted: entry, live, nowMs })),
+                ),
+                { concurrency: "unbounded" },
+              );
+              return { providers };
+            }).pipe(
+              Effect.tapError((cause) =>
+                Effect.logError("orchestration usage limits load failed", { cause }),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetUsageLimitsError({
+                    message: "Failed to load usage limits",
                     cause,
                   }),
               ),

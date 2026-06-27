@@ -158,6 +158,7 @@ describe("ProviderSessionReaper", () => {
       stopSession,
       listSessions: () => Effect.succeed([]),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+      readUsageLimits: () => Effect.succeed([]),
       getInstanceInfo: (instanceId) => {
         const driverKind = ProviderDriverKind.make(String(instanceId));
         return Effect.succeed({
@@ -210,6 +211,7 @@ describe("ProviderSessionReaper", () => {
             ),
           getThreadDetailById: () => Effect.die("unused"),
           getUsageAnalytics: () => Effect.die("unused"),
+          getUsageLimits: () => Effect.die("unused"),
         }),
       ),
       Layer.provideMerge(NodeServices.layer),

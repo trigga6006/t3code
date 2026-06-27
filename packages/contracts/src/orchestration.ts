@@ -20,7 +20,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import { ProviderInstanceId, ProviderDriverKind } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
@@ -29,6 +29,7 @@ export const ORCHESTRATION_WS_METHODS = {
   replayEvents: "orchestration.replayEvents",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getUsageAnalytics: "orchestration.getUsageAnalytics",
+  getUsageLimits: "orchestration.getUsageLimits",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
@@ -1241,6 +1242,15 @@ export const ModelTokenUsage = Schema.Struct({
   outputTokens: NonNegativeInt,
   /** Share of total tokens (0-100). */
   percentage: Schema.Number,
+  /**
+   * A representative provider-instance id that used this model in the range
+   * (from the thread's stored `ModelSelection.instanceId`), or null when the
+   * thread predates instance tracking. The client maps this to the provider
+   * driver (and falls back to the model slug) for provider attribution — e.g.
+   * to group/badge OpenRouter model usage. Kept a loose string so a legacy or
+   * unexpected value never fails the analytics query decode.
+   */
+  instanceId: Schema.NullOr(Schema.String),
 });
 export type ModelTokenUsage = typeof ModelTokenUsage.Type;
 
@@ -1275,6 +1285,44 @@ export const UsageAnalyticsSummary = Schema.Struct({
 });
 export type UsageAnalyticsSummary = typeof UsageAnalyticsSummary.Type;
 
+/**
+ * One provider rate-limit window (the 5-hour "primary" or weekly "secondary"
+ * window). `usedPercent` is 0-100; `resetsAt` is normalized to epoch
+ * **milliseconds** (null when the provider did not report it); and
+ * `windowDurationMins` is the nominal window length in minutes (≈300 for the
+ * 5-hour window, ≈10080 for the weekly window) or null when unknown.
+ */
+export const UsageLimitWindow = Schema.Struct({
+  usedPercent: Schema.Number,
+  resetsAt: Schema.NullOr(Schema.Number),
+  windowDurationMins: Schema.NullOr(Schema.Number),
+});
+export type UsageLimitWindow = typeof UsageLimitWindow.Type;
+
+/**
+ * Read-only rate-limit snapshot for a single provider driver. `fiveHour` and
+ * `weekly` are null until the provider has reported that window at least once
+ * (e.g. before any session has run since startup). `updatedAt` is the epoch-ms
+ * timestamp of the most recent window update across either window, or null.
+ */
+export const ProviderUsageLimits = Schema.Struct({
+  provider: ProviderDriverKind,
+  displayName: TrimmedNonEmptyString,
+  fiveHour: Schema.NullOr(UsageLimitWindow),
+  weekly: Schema.NullOr(UsageLimitWindow),
+  updatedAt: Schema.NullOr(Schema.Number),
+});
+export type ProviderUsageLimits = typeof ProviderUsageLimits.Type;
+
+export const UsageLimitsSummary = Schema.Struct({
+  providers: Schema.Array(ProviderUsageLimits),
+});
+export type UsageLimitsSummary = typeof UsageLimitsSummary.Type;
+
+/** No parameters today; a struct keeps room for future filters (e.g. instanceId). */
+export const UsageLimitsInput = Schema.Struct({});
+export type UsageLimitsInput = typeof UsageLimitsInput.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -1299,6 +1347,10 @@ export const OrchestrationRpcSchemas = {
   getUsageAnalytics: {
     input: UsageAnalyticsInput,
     output: UsageAnalyticsSummary,
+  },
+  getUsageLimits: {
+    input: UsageLimitsInput,
+    output: UsageLimitsSummary,
   },
   subscribeThread: {
     input: OrchestrationSubscribeThreadInput,
@@ -1352,6 +1404,14 @@ export class OrchestrationReplayEventsError extends Schema.TaggedErrorClass<Orch
 
 export class OrchestrationGetUsageAnalyticsError extends Schema.TaggedErrorClass<OrchestrationGetUsageAnalyticsError>()(
   "OrchestrationGetUsageAnalyticsError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+export class OrchestrationGetUsageLimitsError extends Schema.TaggedErrorClass<OrchestrationGetUsageLimitsError>()(
+  "OrchestrationGetUsageLimitsError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),

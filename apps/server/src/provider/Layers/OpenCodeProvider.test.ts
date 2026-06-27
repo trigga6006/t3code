@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { beforeEach } from "vite-plus/test";
 
-import { OpenCodeSettings } from "@t3tools/contracts";
+import { OpenCodeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import { ServerConfig } from "../../config.ts";
 import {
   OpenCodeRuntime,
@@ -38,6 +38,7 @@ const runtimeMock = {
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      commands: [] as unknown[],
     } as unknown,
   },
   reset() {
@@ -48,6 +49,7 @@ const runtimeMock = {
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
+      commands: [] as unknown[],
     };
   },
 };
@@ -197,11 +199,110 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("surfaces OpenCode commands as provider slash commands (deduped)", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: { connected: ["openai"], all: [], default: {} },
+        agents: [],
+        commands: [
+          { name: "init", description: "guided AGENTS.md setup" },
+          { name: "review", description: "review changes" },
+          { name: "init", description: "duplicate ignored" },
+          { name: "   ", description: "blank name ignored" },
+        ],
+      };
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      NodeAssert.deepEqual(
+        snapshot.slashCommands.map((command) => command.name),
+        ["init", "review"],
+      );
+      NodeAssert.equal(snapshot.slashCommands[0]?.description, "guided AGENTS.md setup");
+    }),
+  );
+
   it.effect("closes the local OpenCode server scope after provider refresh", () =>
     Effect.gen(function* () {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
       NodeAssert.equal(runtimeMock.state.closeCalls, 1);
+    }),
+  );
+});
+
+const OPENROUTER_IDENTITY = {
+  providerKind: ProviderDriverKind.make("openrouter"),
+  displayName: "OpenRouter",
+  upstreamProviderId: "openrouter",
+};
+
+const inventoryWith = (connected: ReadonlyArray<string>) => ({
+  providerList: {
+    connected: [...connected],
+    all: [
+      {
+        id: "openrouter",
+        name: "OpenRouter",
+        models: {
+          "anthropic/claude-sonnet-4": {
+            id: "anthropic/claude-sonnet-4",
+            name: "Claude Sonnet 4",
+          },
+        },
+      },
+      {
+        id: "opencode",
+        name: "opencode",
+        models: { "grok-code": { id: "grok-code", name: "Grok Code" } },
+      },
+    ],
+    default: {},
+  },
+  agents: [{ name: "build", hidden: false, mode: "primary" }],
+});
+
+it.layer(testLayer)("checkOpenCodeProviderStatus as the OpenRouter skin", (it) => {
+  it.effect("surfaces only openrouter models and reports ready when openrouter is connected", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = inventoryWith(["openrouter", "opencode"]);
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        process.env,
+        OPENROUTER_IDENTITY,
+      );
+
+      NodeAssert.equal(snapshot.status, "ready");
+      NodeAssert.ok(
+        snapshot.models.some((m) => m.slug === "openrouter/anthropic/claude-sonnet-4"),
+        "expected the OpenRouter model to be listed",
+      );
+      NodeAssert.equal(
+        snapshot.models.some((m) => m.slug.startsWith("opencode/")),
+        false,
+        "the always-on opencode upstream must not leak under the OpenRouter brand",
+      );
+      NodeAssert.equal(snapshot.message, "OpenRouter is connected through OpenCode.");
+    }),
+  );
+
+  it.effect("reports warning with no models when only the opencode upstream is connected", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = inventoryWith(["opencode"]);
+      const snapshot = yield* checkOpenCodeProviderStatus(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        process.env,
+        OPENROUTER_IDENTITY,
+      );
+
+      NodeAssert.equal(snapshot.status, "warning");
+      NodeAssert.equal(snapshot.models.length, 0);
+      NodeAssert.equal(
+        snapshot.message,
+        "OpenCode is available, but OpenRouter is not connected. Add your OpenRouter API key to connect it.",
+      );
     }),
   );
 });

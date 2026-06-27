@@ -9,6 +9,7 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
+  ServerProviderSkill,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -937,6 +938,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
+    // Provider skills are invoked with the `$name` syntax (handled by the
+    // `skill` item type), but they're surfaced in BOTH the `$` menu and the `/`
+    // menu so a provider that exposes its commands as skills (OpenAI/Codex, and
+    // OpenCode skins) is discoverable from `/` just like Claude's slash commands.
+    const toSkillMenuItem = (skill: ServerProviderSkill): ComposerCommandItem => ({
+      id: `skill:${selectedProvider}:${skill.name}`,
+      type: "skill",
+      provider: selectedProvider,
+      skill,
+      label: formatProviderSkillDisplayName(skill),
+      description:
+        skill.shortDescription ??
+        skill.description ??
+        (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+    });
     if (composerTrigger.kind === "path") {
       return workspaceEntries.entries.map((entry) => ({
         id: `path:${entry.kind}:${entry.path}`,
@@ -983,24 +999,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       const query = composerTrigger.query.trim().toLowerCase();
       const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
-      if (!query) {
-        return slashCommandItems;
-      }
-      return searchSlashCommandItems(slashCommandItems, query);
+      const matchedSlashCommands = query
+        ? searchSlashCommandItems(slashCommandItems, query)
+        : slashCommandItems;
+      const skillItems = searchProviderSkills(
+        selectedProviderStatus?.skills ?? [],
+        composerTrigger.query,
+      ).map(toSkillMenuItem);
+      return [...matchedSlashCommands, ...skillItems];
     }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderStatus?.skills ?? [], composerTrigger.query).map(
-        (skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }),
+        toSkillMenuItem,
       );
     }
     return [];

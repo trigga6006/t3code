@@ -26,6 +26,11 @@ import {
   type UsageAnalyticsInput,
   type UsageAnalyticsSummary,
   type UsageAnalyticsTimeRange,
+  type UsageLimitsInput,
+  type UsageLimitsSummary,
+  type ProviderUsageLimits,
+  type UsageLimitWindow,
+  ProviderDriverKind,
 } from "@t3tools/contracts";
 import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
@@ -120,6 +125,9 @@ const UsageModelTokenRowSchema = Schema.Struct({
   model: Schema.NullOr(Schema.String),
   inputTokens: Schema.Number,
   outputTokens: Schema.Number,
+  // A representative provider-instance id for the model (see the MAX(...) note
+  // in `listUsageModelTokenRows`). Used only for client provider attribution.
+  instanceId: Schema.NullOr(Schema.String),
 });
 const UsageDayTokensRowSchema = Schema.Struct({
   day: Schema.String,
@@ -133,6 +141,21 @@ const UsageHourCountRowSchema = Schema.Struct({
   hour: Schema.String,
   count: Schema.Number,
 });
+
+const UsageLimitWindowRowSchema = Schema.Struct({
+  provider: Schema.String,
+  window: Schema.String,
+  usedPercent: Schema.Number,
+  resetsAt: Schema.NullOr(Schema.Number),
+  windowDurationMins: Schema.NullOr(Schema.Number),
+  updatedAt: Schema.String,
+});
+
+/** Providers surfaced in the usage-limits modal, with user-facing labels. */
+const USAGE_LIMIT_PROVIDERS: ReadonlyArray<{ driver: string; displayName: string }> = [
+  { driver: "codex", displayName: "OpenAI" },
+  { driver: "claudeAgent", displayName: "Anthropic" },
+];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -783,7 +806,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           json_extract(t.model_selection_json, '$.model') AS "model",
           COALESCE(SUM(r.input_tokens), 0) AS "inputTokens",
-          COALESCE(SUM(r.output_tokens), 0) AS "outputTokens"
+          COALESCE(SUM(r.output_tokens), 0) AS "outputTokens",
+          -- A representative instance id for provider attribution. Grouping
+          -- stays by model (so existing rows / favoriteModel are unchanged);
+          -- in this app a model slug maps to a single provider driver, so any
+          -- instance that used the model shares that driver and MAX(...) is a
+          -- safe deterministic pick.
+          MAX(json_extract(t.model_selection_json, '$.instanceId')) AS "instanceId"
         FROM ranked_token_usage r
         JOIN projection_threads t ON t.thread_id = r.thread_id
         WHERE r.rn = 1
@@ -845,6 +874,47 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         FROM projection_thread_messages
         WHERE created_at >= ${cutoff}
         GROUP BY "hour"
+      `,
+  });
+
+  // Latest rate-limit window per (provider, window) across every thread. Each
+  // `account.rate-limits.updated` activity stores one normalized window in its
+  // payload_json (see ProviderRuntimeIngestion); ROW_NUMBER keeps only the most
+  // recent row per provider+window so the modal reflects the freshest snapshot.
+  const listLatestUsageLimitWindowRows = SqlSchema.findAll({
+    Request: Schema.Struct({}),
+    Result: UsageLimitWindowRowSchema,
+    execute: () =>
+      sql`
+        WITH ranked_usage_limits AS (
+          SELECT
+            json_extract(a.payload_json, '$.provider') AS provider,
+            json_extract(a.payload_json, '$.window') AS window,
+            json_extract(a.payload_json, '$.usedPercent') AS usedPercent,
+            json_extract(a.payload_json, '$.resetsAt') AS resetsAt,
+            json_extract(a.payload_json, '$.windowDurationMins') AS windowDurationMins,
+            a.created_at AS updatedAt,
+            ROW_NUMBER() OVER (
+              PARTITION BY
+                json_extract(a.payload_json, '$.provider'),
+                json_extract(a.payload_json, '$.window')
+              ORDER BY a.created_at DESC, a.activity_id DESC
+            ) AS rn
+          FROM projection_thread_activities a
+          WHERE a.kind = 'account.rate-limits.updated'
+        )
+        SELECT
+          provider AS "provider",
+          window AS "window",
+          usedPercent AS "usedPercent",
+          resetsAt AS "resetsAt",
+          windowDurationMins AS "windowDurationMins",
+          updatedAt AS "updatedAt"
+        FROM ranked_usage_limits
+        WHERE rn = 1
+          AND provider IS NOT NULL
+          AND window IS NOT NULL
+          AND usedPercent IS NOT NULL
       `,
   });
 
@@ -1930,7 +2000,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const outputTokens = Math.max(0, Math.round(row.outputTokens));
           const total = inputTokens + outputTokens;
           if (total === 0) return [];
-          return [{ model: row.model, inputTokens, outputTokens, total }];
+          const instanceId =
+            row.instanceId != null && row.instanceId.length > 0 ? row.instanceId : null;
+          return [{ model: row.model, inputTokens, outputTokens, total, instanceId }];
         })
         .sort((a, b) => b.total - a.total)
         .map((row) => ({
@@ -1938,6 +2010,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           inputTokens: row.inputTokens,
           outputTokens: row.outputTokens,
           percentage: totalTokens > 0 ? (row.total / totalTokens) * 100 : 0,
+          instanceId: row.instanceId,
         }));
       const favoriteModel = modelBreakdown.length > 0 ? modelBreakdown[0]!.model : null;
 
@@ -1976,6 +2049,68 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         dailyActivity,
         dailyTokens,
       } satisfies UsageAnalyticsSummary;
+    });
+
+  const getUsageLimits: ProjectionSnapshotQueryShape["getUsageLimits"] = (
+    _input: UsageLimitsInput,
+  ) =>
+    Effect.gen(function* () {
+      const mapError = toPersistenceSqlOrDecodeError(
+        "ProjectionSnapshotQuery.getUsageLimits:query",
+        "ProjectionSnapshotQuery.getUsageLimits:decodeRow",
+      );
+      const rows = yield* listLatestUsageLimitWindowRows({}).pipe(Effect.mapError(mapError));
+
+      // Collapse the (provider, window) rows into one entry per provider.
+      const byProvider = new Map<
+        string,
+        { fiveHour: UsageLimitWindow | null; weekly: UsageLimitWindow | null; updatedAt: number | null }
+      >();
+      const ensure = (provider: string) => {
+        let entry = byProvider.get(provider);
+        if (!entry) {
+          entry = { fiveHour: null, weekly: null, updatedAt: null };
+          byProvider.set(provider, entry);
+        }
+        return entry;
+      };
+
+      for (const row of rows) {
+        if (row.window !== "fiveHour" && row.window !== "weekly") {
+          continue;
+        }
+        const entry = ensure(row.provider);
+        const windowValue: UsageLimitWindow = {
+          usedPercent: row.usedPercent,
+          resetsAt: row.resetsAt,
+          windowDurationMins: row.windowDurationMins,
+        };
+        if (row.window === "fiveHour") {
+          entry.fiveHour = windowValue;
+        } else {
+          entry.weekly = windowValue;
+        }
+        const updatedAtMs = Date.parse(row.updatedAt);
+        if (Number.isFinite(updatedAtMs)) {
+          entry.updatedAt =
+            entry.updatedAt === null ? updatedAtMs : Math.max(entry.updatedAt, updatedAtMs);
+        }
+      }
+
+      // Always return both known providers (in a stable order) so the modal can
+      // render an "awaiting data" row before a provider has reported limits.
+      const providers = USAGE_LIMIT_PROVIDERS.map((descriptor) => {
+        const entry = byProvider.get(descriptor.driver);
+        return {
+          provider: ProviderDriverKind.make(descriptor.driver),
+          displayName: descriptor.displayName,
+          fiveHour: entry?.fiveHour ?? null,
+          weekly: entry?.weekly ?? null,
+          updatedAt: entry?.updatedAt ?? null,
+        } satisfies ProviderUsageLimits;
+      });
+
+      return { providers } satisfies UsageLimitsSummary;
     });
 
   const getActiveProjectByWorkspaceRoot: ProjectionSnapshotQueryShape["getActiveProjectByWorkspaceRoot"] =
@@ -2322,6 +2457,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getThreadShellById,
     getThreadDetailById,
     getUsageAnalytics,
+    getUsageLimits,
   } satisfies ProjectionSnapshotQueryShape;
 });
 

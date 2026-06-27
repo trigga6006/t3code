@@ -25,5 +25,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       tag: ORCHESTRATION_WS_METHODS.getUsageAnalytics,
       staleTimeMs: 300_000,
     }),
+    usageLimits: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:usage-limits",
+      tag: ORCHESTRATION_WS_METHODS.getUsageLimits,
+      staleTimeMs: 60_000,
+    }),
   };
 }

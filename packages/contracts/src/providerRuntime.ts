@@ -534,8 +534,31 @@ const AccountUpdatedPayload = Schema.Struct({
 });
 export type AccountUpdatedPayload = typeof AccountUpdatedPayload.Type;
 
+/**
+ * A single normalized rate-limit window emitted alongside the raw driver
+ * payload. `window` selects the 5-hour ("fiveHour") or weekly ("weekly")
+ * bucket; `usedPercent` is 0-100; `resetsAt` is normalized to epoch
+ * **milliseconds** (null when the driver did not report it); and
+ * `windowDurationMins` is the nominal window length in minutes (or null).
+ *
+ * Adapters fill these so downstream consumers do not have to understand each
+ * driver's bespoke rate-limit message shape. `rateLimits` is retained verbatim
+ * for back-compat / debugging.
+ */
+const UsageLimitWindowSnapshot = Schema.Struct({
+  window: Schema.Literals(["fiveHour", "weekly"]),
+  usedPercent: Schema.Number,
+  resetsAt: Schema.NullOr(Schema.Number),
+  windowDurationMins: Schema.NullOr(Schema.Number),
+});
+export type UsageLimitWindowSnapshot = typeof UsageLimitWindowSnapshot.Type;
+
 const AccountRateLimitsUpdatedPayload = Schema.Struct({
   rateLimits: Schema.Unknown,
+  /** Driver kind that produced this snapshot (e.g. "codex", "claudeAgent"). */
+  provider: Schema.optional(ProviderDriverKind),
+  /** Normalized windows derived from the raw `rateLimits` payload. */
+  windows: Schema.optional(Schema.Array(UsageLimitWindowSnapshot)),
 });
 export type AccountRateLimitsUpdatedPayload = typeof AccountRateLimitsUpdatedPayload.Type;
 

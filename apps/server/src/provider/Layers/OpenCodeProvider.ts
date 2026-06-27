@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
+  type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
@@ -17,6 +18,7 @@ import {
   parseGenericCliVersion,
   providerModelsFromSettings,
   type ServerProviderDraft,
+  type ServerProviderPresentation,
 } from "../providerSnapshot.ts";
 import {
   OpenCodeRuntime,
@@ -30,7 +32,45 @@ const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
   showInteractionModeToggle: false,
 } as const;
+/**
+ * Minimum OpenCode CLI version OmniCode requires. This is the floor for the
+ * `provider/model` slug + tool-calling behaviour the adapter relies on. The
+ * recommended version is the latest stable release (≈1.17.x as of 2026-06);
+ * newer OpenCode releases improve OpenRouter provider handling and tool-call
+ * fidelity, but are NOT force-required here — anything ≥ this floor works.
+ */
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
+
+/**
+ * Optional identity overrides so the OpenCode snapshot builders can present a
+ * different first-class provider (e.g. `openrouter`) while still driving the
+ * same `opencode` binary. When omitted, the snapshot is stamped as OpenCode.
+ */
+export interface OpenCodeProviderIdentity {
+  readonly providerKind?: ProviderDriverKind;
+  readonly displayName?: string;
+  /**
+   * When set, restrict the discovered model list — and the "ready" gate — to a
+   * single OpenCode upstream provider id (e.g. `"openrouter"`). This makes a
+   * first-class skin like OpenRouter surface ONLY its own models and report
+   * `ready` only when that specific upstream is connected, instead of every
+   * upstream OpenCode happens to have connected (notably the always-on
+   * `opencode` zen provider, which would otherwise leak non-OpenRouter models
+   * under the OpenRouter brand and make the instance look "ready" with no key).
+   */
+  readonly upstreamProviderId?: string;
+}
+
+function resolveOpenCodeIdentity(identity: OpenCodeProviderIdentity | undefined): {
+  readonly provider: ProviderDriverKind;
+  readonly presentation: ServerProviderPresentation;
+} {
+  const provider = identity?.providerKind ?? PROVIDER;
+  const presentation: ServerProviderPresentation = identity?.displayName
+    ? { ...OPENCODE_PRESENTATION, displayName: identity.displayName }
+    : OPENCODE_PRESENTATION;
+  return { provider, presentation };
+}
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause: unknown;
@@ -219,12 +259,21 @@ function openCodeCapabilitiesForModel(input: {
   });
 }
 
-function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
+function flattenOpenCodeModels(
+  input: OpenCodeInventory,
+  upstreamProviderId?: string,
+): ReadonlyArray<ServerProviderModel> {
   const connected = new Set(input.providerList.connected);
   const models: Array<ServerProviderModel> = [];
 
   for (const provider of input.providerList.all) {
     if (!connected.has(provider.id)) {
+      continue;
+    }
+    // First-class skins (e.g. OpenRouter) restrict discovery to their own
+    // upstream so foreign models (like the always-on `opencode` provider) are
+    // not surfaced under their brand.
+    if (upstreamProviderId !== undefined && provider.id !== upstreamProviderId) {
       continue;
     }
 
@@ -252,21 +301,46 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
   return models.toSorted((left, right) => left.name.localeCompare(right.name));
 }
 
+/**
+ * Map OpenCode's `/command` list to provider slash commands. OpenCode commands
+ * (built-ins, custom commands, MCP prompts, and skills) are all invoked with the
+ * `/name` syntax — the same shape Claude uses — so each becomes a
+ * `ServerProviderSlashCommand` keyed by name, deduped, carrying its description.
+ */
+function mapOpenCodeCommands(
+  commands: OpenCodeInventory["commands"] | undefined,
+): ReadonlyArray<ServerProviderSlashCommand> {
+  const seen = new Set<string>();
+  const mapped: Array<ServerProviderSlashCommand> = [];
+  for (const command of commands ?? []) {
+    const name = nonEmptyTrimmed(command.name);
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    const description = nonEmptyTrimmed(command.description ?? "");
+    mapped.push(description ? { name, description } : { name });
+  }
+  return mapped;
+}
+
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
+  identity?: OpenCodeProviderIdentity,
 ): Effect.Effect<ServerProviderDraft> =>
   Effect.gen(function* () {
+    const { provider, presentation } = resolveOpenCodeIdentity(identity);
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = providerModelsFromSettings(
       [],
-      PROVIDER,
+      provider,
       openCodeSettings.customModels,
       DEFAULT_OPENCODE_MODEL_CAPABILITIES,
     );
 
     if (!openCodeSettings.enabled) {
       return buildServerProvider({
-        presentation: OPENCODE_PRESENTATION,
+        presentation,
         enabled: false,
         checkedAt,
         models,
@@ -284,7 +358,7 @@ export const makePendingOpenCodeProvider = (
     }
 
     return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
+      presentation,
       enabled: true,
       checkedAt,
       models,
@@ -302,7 +376,9 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   openCodeSettings: OpenCodeSettings,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
+  identity?: OpenCodeProviderIdentity,
 ): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
+  const { provider, presentation } = resolveOpenCodeIdentity(identity);
   const openCodeRuntime = yield* OpenCodeRuntime;
   const resolvedEnvironment = environment ?? process.env;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -316,12 +392,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       serverUrl: openCodeSettings.serverUrl,
     });
     return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
+      presentation,
       enabled: openCodeSettings.enabled,
       checkedAt,
       models: providerModelsFromSettings(
         [],
-        PROVIDER,
+        provider,
         customModels,
         DEFAULT_OPENCODE_MODEL_CAPABILITIES,
       ),
@@ -337,12 +413,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
 
   if (!openCodeSettings.enabled) {
     return buildServerProvider({
-      presentation: OPENCODE_PRESENTATION,
+      presentation,
       enabled: false,
       checkedAt,
       models: providerModelsFromSettings(
         [],
-        PROVIDER,
+        provider,
         customModels,
         DEFAULT_OPENCODE_MODEL_CAPABILITIES,
       ),
@@ -388,12 +464,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     }
     if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
       return buildServerProvider({
-        presentation: OPENCODE_PRESENTATION,
+        presentation,
         enabled: openCodeSettings.enabled,
         checkedAt,
         models: providerModelsFromSettings(
           [],
-          PROVIDER,
+          provider,
           customModels,
           DEFAULT_OPENCODE_MODEL_CAPABILITIES,
         ),
@@ -436,32 +512,52 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     return fallback(Cause.squash(inventoryExit.cause), version);
   }
 
+  const upstreamProviderId = identity?.upstreamProviderId;
   const models = providerModelsFromSettings(
-    flattenOpenCodeModels(inventoryExit.value),
-    PROVIDER,
+    flattenOpenCodeModels(inventoryExit.value, upstreamProviderId),
+    provider,
     customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  const connectedCount = inventoryExit.value.providerList.connected.length;
+  const connectedProviders = inventoryExit.value.providerList.connected;
+  const connectedCount = connectedProviders.length;
+  // For a first-class skin the gate is "is MY upstream connected", not "is any
+  // upstream connected" — otherwise the always-on `opencode` provider would
+  // make the instance report `ready` (with no models) before a key is set.
+  const isReady =
+    upstreamProviderId === undefined
+      ? connectedCount > 0
+      : connectedProviders.includes(upstreamProviderId);
+
+  let message: string;
+  if (upstreamProviderId !== undefined) {
+    const upstreamLabel = presentation.displayName ?? upstreamProviderId;
+    message = isReady
+      ? `${upstreamLabel} is connected through OpenCode.`
+      : `OpenCode is available, but ${upstreamLabel} is not connected. Add your ${upstreamLabel} API key to connect it.`;
+  } else if (connectedCount > 0) {
+    message = `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`;
+  } else {
+    message = isExternalServer
+      ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
+      : "OpenCode is available, but it did not report any connected upstream providers.";
+  }
+
   return buildServerProvider({
-    presentation: OPENCODE_PRESENTATION,
+    presentation,
     enabled: true,
     checkedAt,
     models,
+    slashCommands: mapOpenCodeCommands(inventoryExit.value.commands),
     probe: {
       installed: true,
       version,
-      status: connectedCount > 0 ? "ready" : "warning",
+      status: isReady ? "ready" : "warning",
       auth: {
-        status: connectedCount > 0 ? "authenticated" : "unknown",
+        status: isReady ? "authenticated" : "unknown",
         type: "opencode",
       },
-      message:
-        connectedCount > 0
-          ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
-          : isExternalServer
-            ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
-            : "OpenCode is available, but it did not report any connected upstream providers.",
+      message,
     },
   });
 });

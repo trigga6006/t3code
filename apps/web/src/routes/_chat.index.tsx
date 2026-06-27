@@ -1,10 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { LinkIcon, PlusIcon } from "lucide-react";
 
-import { NoActiveThreadState } from "../components/NoActiveThreadState";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
+import { WelcomeLanding } from "../components/WelcomeLanding";
 import { useEnvironments } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -19,7 +19,7 @@ function ChatIndexRouteView() {
     return <HostedStaticOnboardingState />;
   }
 
-  return <NoActiveThreadState />;
+  return <WelcomeLanding />;
 }
 
 export const Route = createFileRoute("/_chat/")({

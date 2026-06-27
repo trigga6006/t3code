@@ -79,6 +79,38 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects a slash command typed mid-prompt after other words", () => {
+    const text = "fix the failing test /rev";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "rev",
+      rangeStart: "fix the failing test ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects a bare slash typed mid-prompt (empty query, full menu)", () => {
+    const text = "ten full words here /";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "",
+      rangeStart: "ten full words here ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("does not treat a slash inside a word as a command trigger", () => {
+    // No whitespace before the slash → not a token boundary → plain text.
+    const text = "see src/components/App";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toBeNull();
+  });
+
   it("detects $skill trigger at cursor", () => {
     const text = "Use $gh-fi";
     const trigger = detectComposerTrigger(text, text.length);

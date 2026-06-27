@@ -1,18 +1,44 @@
 import { describe, expect, it } from "vite-plus/test";
+import type { ModelTokenUsage, ServerProvider } from "@t3tools/contracts";
 
 import {
   addDays,
   buildHeatmap,
   buildModelNameResolver,
+  buildModelProviderResolver,
   buildTokenBuckets,
   eachDay,
   formatCompactTokens,
   formatCount,
   formatStreak,
   formatTokensInOut,
+  groupModelUsageByProvider,
   heatmapLevel,
   prideAndPrejudiceComparison,
 } from "./analytics.logic";
+
+// Minimal ServerProvider stubs — the attribution resolver only reads
+// `instanceId`, `driver`, and `models[].slug`.
+function provider(
+  instanceId: string,
+  driver: string,
+  slugs: ReadonlyArray<string>,
+): ServerProvider {
+  return {
+    instanceId,
+    driver,
+    models: slugs.map((slug) => ({ slug, name: slug, isCustom: false, capabilities: {} })),
+  } as unknown as ServerProvider;
+}
+
+function usageRow(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  instanceId: string | null,
+): ModelTokenUsage {
+  return { model, inputTokens, outputTokens, percentage: 0, instanceId };
+}
 
 describe("analytics.logic formatting", () => {
   it("formats counts with thousands separators", () => {
@@ -113,5 +139,76 @@ describe("buildModelNameResolver", () => {
     ] as never);
     expect(resolve("claude-opus-4-8")).toBe("Opus 4.8");
     expect(resolve("mystery-model")).toBe("mystery-model");
+  });
+});
+
+describe("buildModelProviderResolver", () => {
+  const providers = [
+    provider("codex", "codex", ["gpt-5.4"]),
+    provider("openrouter", "openrouter", ["openrouter/anthropic/claude-sonnet-4"]),
+  ];
+
+  it("attributes by instanceId first (server-authoritative)", () => {
+    const resolve = buildModelProviderResolver(providers);
+    const attribution = resolve({ model: "gpt-5.4", instanceId: "codex" });
+    expect(attribution?.driverKind).toBe("codex");
+    expect(attribution?.displayName).toBe("Codex");
+  });
+
+  it("attributes by model slug present in a provider's model list", () => {
+    const resolve = buildModelProviderResolver(providers);
+    const attribution = resolve({
+      model: "openrouter/anthropic/claude-sonnet-4",
+      instanceId: null,
+    });
+    expect(attribution?.driverKind).toBe("openrouter");
+    expect(attribution?.displayName).toBe("OpenRouter");
+  });
+
+  it("falls back to the slug's first segment matching a known driver (openrouter/<id>)", () => {
+    const resolve = buildModelProviderResolver(providers);
+    // Not in the discovered model list, but the prefix names a known driver.
+    const attribution = resolve({ model: "openrouter/meta-llama/llama-4", instanceId: null });
+    expect(attribution?.driverKind).toBe("openrouter");
+  });
+
+  it("returns null when the provider cannot be determined", () => {
+    const resolve = buildModelProviderResolver(providers);
+    expect(resolve({ model: "mystery-model", instanceId: null })).toBeNull();
+  });
+});
+
+describe("groupModelUsageByProvider", () => {
+  const providers = [
+    provider("codex", "codex", ["gpt-5.4"]),
+    provider("openrouter", "openrouter", ["openrouter/anthropic/claude-sonnet-4"]),
+  ];
+  const resolve = buildModelProviderResolver(providers);
+
+  it("groups rows by provider, sorts by tokens, and trails unattributed rows in 'Other'", () => {
+    const breakdown = [
+      usageRow("gpt-5.4", 100, 100, "codex"), // 200 → Codex
+      usageRow("openrouter/anthropic/claude-sonnet-4", 500, 500, "openrouter"), // 1000 → OpenRouter
+      usageRow("mystery-model", 10, 10, null), // 20 → Other
+    ];
+    const groups = groupModelUsageByProvider(breakdown, resolve);
+
+    expect(groups.map((g) => g.displayName)).toEqual(["OpenRouter", "Codex", "Other"]);
+    expect(groups[0]?.totalTokens).toBe(1000);
+    expect(groups[2]?.driverKind).toBeNull();
+    // Percentages are of the grand total (1220).
+    expect(Math.round(groups[0]!.percentage)).toBe(82);
+  });
+
+  it("merges multiple models of the same provider into one group", () => {
+    const breakdown = [
+      usageRow("openrouter/anthropic/claude-sonnet-4", 300, 0, "openrouter"),
+      usageRow("openrouter/openai/gpt-5", 100, 0, "openrouter"),
+    ];
+    const groups = groupModelUsageByProvider(breakdown, resolve);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.displayName).toBe("OpenRouter");
+    expect(groups[0]?.models).toHaveLength(2);
+    expect(groups[0]?.inputTokens).toBe(400);
   });
 });

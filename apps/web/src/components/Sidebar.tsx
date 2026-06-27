@@ -6,7 +6,6 @@ import {
   FolderPlusIcon,
   Globe2Icon,
   SearchIcon,
-  SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
@@ -125,6 +124,7 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
+import { SettingsLimitsPopover } from "./settings/SettingsLimitsPopover";
 import { Kbd } from "./ui/kbd";
 import {
   getArm64IntelBuildWarningDescription,
@@ -2745,14 +2745,11 @@ function OmniMark() {
 }
 
 const SidebarChromeFooter = memo(function SidebarChromeFooter() {
-  const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const handleSettingsClick = useCallback(() => {
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-    void navigate({ to: "/settings" });
-  }, [isMobile, navigate, setOpenMobile]);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const handleCloseMobileSidebar = useCallback(() => {
+    setOpenMobile(false);
+  }, [setOpenMobile]);
 
   return (
     <SidebarFooter className="p-2">
@@ -2760,14 +2757,11 @@ const SidebarChromeFooter = memo(function SidebarChromeFooter() {
       <SidebarUpdatePill />
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-            onClick={handleSettingsClick}
-          >
-            <SettingsIcon className="size-3.5" />
-            <span className="text-xs">Settings</span>
-          </SidebarMenuButton>
+          <SettingsLimitsPopover
+            environmentId={primaryEnvironmentId}
+            isMobile={isMobile}
+            onCloseMobileSidebar={handleCloseMobileSidebar}
+          />
         </SidebarMenuItem>
       </SidebarMenu>
     </SidebarFooter>

@@ -355,6 +355,82 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+/**
+ * OpenRouter is a first-class provider that is *routed through the OpenCode
+ * harness*: the same `opencode` binary/server runs the agent loop, and
+ * OpenRouter is selected via `openrouter/<model>` slugs. The config shape
+ * therefore mirrors {@link OpenCodeSettings} (it drives the same binary).
+ *
+ * The OpenRouter API key is entered in the `apiKey` field below. The server
+ * injects it into the spawned `opencode` process env as `OPENROUTER_API_KEY`
+ * (unless the per-instance `ProviderInstanceEnvironment` already provides one,
+ * which takes precedence); OpenCode auto-detects `OPENROUTER_API_KEY`
+ * (`opencode auth list` shows it) and connects OpenRouter as an upstream
+ * provider. See `provider/Drivers/OpenRouterDriver.ts`.
+ */
+export const OpenRouterSettings = makeProviderSettingsSchema(
+  {
+    enabled: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(true)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    apiKey: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "API key",
+        description:
+          "Your OpenRouter API key (sk-or-…). Stored in plain text on disk and passed to OpenCode as OPENROUTER_API_KEY when T3 Code spawns OpenCode. If you configure an external Server URL instead, set the key on that server.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "sk-or-...",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    binaryPath: makeBinaryPathSetting("opencode").pipe(
+      Schema.annotateKey({
+        title: "Binary path",
+        description: "Path to the OpenCode binary that hosts OpenRouter models.",
+        providerSettingsForm: {
+          placeholder: "opencode",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    serverUrl: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Server URL",
+        description: "Leave blank to let T3 Code spawn the OpenCode server when needed.",
+        providerSettingsForm: {
+          placeholder: "http://127.0.0.1:4096",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    serverPassword: TrimmedString.pipe(
+      Schema.withDecodingDefault(Effect.succeed("")),
+      Schema.annotateKey({
+        title: "Server password",
+        description: "Stored in plain text on disk.",
+        providerSettingsForm: {
+          control: "password",
+          placeholder: "Optional",
+          clearWhenEmpty: "omit",
+        },
+      }),
+    ),
+    customModels: Schema.Array(Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+  },
+  {
+    order: ["apiKey", "binaryPath", "serverUrl", "serverPassword"],
+  },
+);
+export type OpenRouterSettings = typeof OpenRouterSettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -399,6 +475,7 @@ export const ServerSettings = Schema.Struct({
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     grok: GrokSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    openrouter: OpenRouterSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -501,6 +578,15 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const OpenRouterSettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  apiKey: Schema.optionalKey(TrimmedString),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  serverUrl: Schema.optionalKey(TrimmedString),
+  serverPassword: Schema.optionalKey(TrimmedString),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -523,6 +609,7 @@ export const ServerSettingsPatch = Schema.Struct({
       cursor: Schema.optionalKey(CursorSettingsPatch),
       grok: Schema.optionalKey(GrokSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      openrouter: Schema.optionalKey(OpenRouterSettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

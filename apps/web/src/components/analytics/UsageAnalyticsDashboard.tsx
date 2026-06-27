@@ -10,7 +10,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
-import { buildModelNameResolver } from "./analytics.logic";
+import { buildModelNameResolver, buildModelProviderResolver } from "./analytics.logic";
 import { OverviewPanel } from "./OverviewPanel";
 import { ModelsPanel } from "./ModelsPanel";
 
@@ -46,6 +46,7 @@ export function UsageAnalyticsDashboard({ environmentId }: { environmentId: Envi
 
   const providers = useAtomValue(primaryServerProvidersAtom);
   const resolveModelName = useMemo(() => buildModelNameResolver(providers), [providers]);
+  const resolveModelProvider = useMemo(() => buildModelProviderResolver(providers), [providers]);
 
   const analytics = useEnvironmentQuery(
     orchestrationEnvironment.usageAnalytics({ environmentId, input: { timeRange } }),
@@ -126,6 +127,7 @@ export function UsageAnalyticsDashboard({ environmentId }: { environmentId: Envi
                   timeRange={timeRange}
                   today={today}
                   resolveModelName={resolveModelName}
+                  resolveModelProvider={resolveModelProvider}
                 />
               )
             ) : (

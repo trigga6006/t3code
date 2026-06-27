@@ -39,6 +39,7 @@ export const PROVIDER_OPTIONS: Array<{
     available: true,
     pickerSidebarBadge: "new",
   },
+  { value: ProviderDriverKind.make("openrouter"), label: "OpenRouter", available: true },
   {
     value: ProviderDriverKind.make("cursor"),
     label: "Cursor",
@@ -633,6 +634,7 @@ export function deriveWorkLogEntries(
     if (activity.kind === "tool.started") continue;
     if (activity.kind === "task.started") continue;
     if (activity.kind === "context-window.updated") continue;
+    if (activity.kind === "account.rate-limits.updated") continue;
     if (activity.summary === "Checkpoint captured") continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     entries.push(toDerivedWorkLogEntry(activity));

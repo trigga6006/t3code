@@ -51,6 +51,15 @@ import {
 } from "../opencodeRuntime.ts";
 import * as Option from "effect/Option";
 
+/**
+ * Default provider identity for this adapter. The OpenCode runtime is also
+ * reused by other drivers (e.g. the first-class `openrouter` driver) that
+ * route through the same `opencode` binary but must surface their own
+ * provider identity. Such drivers pass `options.providerKind`; everything
+ * that stamps a provider onto an emitted runtime event, session, or adapter
+ * error reads the per-instance `provider` binding instead of this constant so
+ * that `ProviderService`'s per-event provider validation accepts them.
+ */
 const PROVIDER = ProviderDriverKind.make("opencode");
 
 interface OpenCodeTurnSnapshot {
@@ -103,6 +112,13 @@ export interface OpenCodeAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /**
+   * Provider identity this adapter instance should stamp onto every emitted
+   * runtime event, session, and adapter error. Defaults to `"opencode"`.
+   * The first-class `openrouter` driver passes `ProviderDriverKind.make("openrouter")`
+   * here so a single OpenCode runtime can back multiple first-class providers.
+   */
+  readonly providerKind?: ProviderDriverKind;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -113,13 +129,15 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
  * sites pipe through this in `Effect.mapError` so they never build the error
  * shape by hand.
  */
-const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestError =>
-  new ProviderAdapterRequestError({
-    provider: PROVIDER,
-    method: cause.operation,
-    detail: cause.detail,
-    cause: cause.cause,
-  });
+const toRequestError =
+  (provider: ProviderDriverKind) =>
+  (cause: OpenCodeRuntimeError): ProviderAdapterRequestError =>
+    new ProviderAdapterRequestError({
+      provider,
+      method: cause.operation,
+      detail: cause.detail,
+      cause: cause.cause,
+    });
 
 /**
  * Map a `Cause.squash`-ed failure into a `ProviderAdapterProcessError`. The
@@ -127,9 +145,13 @@ const toRequestError = (cause: OpenCodeRuntimeError): ProviderAdapterRequestErro
  * in which case we preserve its `detail`; otherwise we fall back to
  * {@link openCodeRuntimeErrorDetail} for unknown causes (defects, etc.).
  */
-const toProcessError = (threadId: ThreadId, cause: unknown): ProviderAdapterProcessError =>
+const toProcessError = (
+  provider: ProviderDriverKind,
+  threadId: ThreadId,
+  cause: unknown,
+): ProviderAdapterProcessError =>
   new ProviderAdapterProcessError({
-    provider: PROVIDER,
+    provider,
     threadId,
     detail: OpenCodeRuntimeError.is(cause) ? cause.detail : openCodeRuntimeErrorDetail(cause),
     cause,
@@ -229,13 +251,14 @@ function appendTurnItem(
 }
 
 function ensureSessionContext(
+  provider: ProviderDriverKind,
   sessions: ReadonlyMap<ThreadId, OpenCodeSessionContext>,
   threadId: ThreadId,
 ): OpenCodeSessionContext {
   const session = sessions.get(threadId);
   if (!session) {
     throw new ProviderAdapterSessionNotFoundError({
-      provider: PROVIDER,
+      provider,
       threadId,
     });
   }
@@ -244,7 +267,7 @@ function ensureSessionContext(
   // no fiber suspension required, which keeps this callable everywhere.
   if (Ref.getUnsafe(session.stopped)) {
     throw new ProviderAdapterSessionClosedError({
-      provider: PROVIDER,
+      provider,
       threadId,
     });
   }
@@ -430,6 +453,12 @@ export function makeOpenCodeAdapter(
 ) {
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("opencode");
+    // Per-instance provider identity. All runtime-event / session / error
+    // stamps below read this binding (not the module `PROVIDER` constant) so
+    // that providers reusing the OpenCode runtime (e.g. `openrouter`) emit
+    // events that pass `ProviderService`'s per-event provider check.
+    const provider = options?.providerKind ?? PROVIDER;
+    const mapRequestError = toRequestError(provider);
     const serverConfig = yield* ServerConfig;
     const openCodeRuntime = yield* OpenCodeRuntime;
     const crypto = yield* Crypto.Crypto;
@@ -450,7 +479,7 @@ export function makeOpenCodeAdapter(
       Effect.mapError(
         (cause) =>
           new ProviderAdapterRequestError({
-            provider: PROVIDER,
+            provider,
             method: "crypto/randomUUIDv4",
             detail: "Failed to generate OpenCode runtime identifier.",
             cause,
@@ -464,7 +493,7 @@ export function makeOpenCodeAdapter(
       }).pipe(
         Effect.map(({ eventId, createdAt }) => ({
           eventId,
-          provider: PROVIDER,
+          provider,
           threadId: input.threadId,
           createdAt,
           ...(input.turnId ? { turnId: input.turnId } : {}),
@@ -656,7 +685,7 @@ export function makeOpenCodeAdapter(
       yield* writeNativeEventBestEffort(context.session.threadId, {
         observedAt: yield* nowIso,
         event: {
-          provider: PROVIDER,
+          provider,
           threadId: context.session.threadId,
           providerThreadId: context.openCodeSessionId,
           type: event.type,
@@ -1092,7 +1121,11 @@ export function makeOpenCodeAdapter(
           );
           if (Exit.isFailure(startedExit)) {
             yield* Scope.close(sessionScope, Exit.void).pipe(Effect.ignore);
-            return yield* toProcessError(input.threadId, Cause.squash(startedExit.cause));
+            return yield* toProcessError(
+              provider,
+              input.threadId,
+              Cause.squash(startedExit.cause),
+            );
           }
           return startedExit.value;
         });
@@ -1114,7 +1147,7 @@ export function makeOpenCodeAdapter(
 
         const createdAt = yield* nowIso;
         const session: ProviderSession = {
-          provider: PROVIDER,
+          provider,
           providerInstanceId: boundInstanceId,
           status: "ready",
           runtimeMode: input.runtimeMode,
@@ -1167,7 +1200,7 @@ export function makeOpenCodeAdapter(
     );
 
     const sendTurn: OpenCodeAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-      const context = ensureSessionContext(sessions, input.threadId);
+      const context = ensureSessionContext(provider, sessions, input.threadId);
       // A sendTurn while a turn is active is a steer: OpenCode queues the
       // prompt into the busy session and the work continues as one turn, so
       // the active turn id is reused instead of opening a new turn.
@@ -1180,7 +1213,7 @@ export function makeOpenCodeAdapter(
           : undefined);
       if (modelSelection !== undefined && modelSelection.instanceId !== boundInstanceId) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: `OpenCode model selection is bound to instance '${modelSelection?.instanceId}', expected '${boundInstanceId}'.`,
         });
@@ -1188,7 +1221,7 @@ export function makeOpenCodeAdapter(
       const parsedModel = parseOpenCodeModelSlug(modelSelection?.model);
       if (!parsedModel) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: "OpenCode model selection must use the 'provider/model' format.",
         });
@@ -1205,7 +1238,7 @@ export function makeOpenCodeAdapter(
       });
       if ((!text || text.length === 0) && fileParts.length === 0) {
         return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
+          provider,
           operation: "sendTurn",
           issue: "OpenCode turns require text input or at least one attachment.",
         });
@@ -1247,7 +1280,7 @@ export function makeOpenCodeAdapter(
           parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
         }),
       ).pipe(
-        Effect.mapError(toRequestError),
+        Effect.mapError(mapRequestError),
         // On failure of a fresh turn: clear active-turn state, flip the
         // session back to ready with lastError set, emit turn.aborted, then
         // let the typed error propagate. We don't need to rebuild the error
@@ -1291,10 +1324,10 @@ export function makeOpenCodeAdapter(
 
     const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
       function* (threadId, turnId) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = ensureSessionContext(provider, sessions, threadId);
         yield* runOpenCodeSdk("session.abort", () =>
           context.client.session.abort({ sessionID: context.openCodeSessionId }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapRequestError));
         if (turnId ?? context.activeTurnId) {
           yield* emit({
             ...(yield* buildEventBase({
@@ -1313,10 +1346,10 @@ export function makeOpenCodeAdapter(
     const respondToRequest: OpenCodeAdapterShape["respondToRequest"] = Effect.fn(
       "respondToRequest",
     )(function* (threadId, requestId, decision) {
-      const context = ensureSessionContext(sessions, threadId);
+      const context = ensureSessionContext(provider, sessions, threadId);
       if (!context.pendingPermissions.has(requestId)) {
         return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
+          provider,
           method: "permission.reply",
           detail: `Unknown pending permission request: ${requestId}`,
         });
@@ -1327,17 +1360,17 @@ export function makeOpenCodeAdapter(
           requestID: requestId,
           reply: toOpenCodePermissionReply(decision),
         }),
-      ).pipe(Effect.mapError(toRequestError));
+      ).pipe(Effect.mapError(mapRequestError));
     });
 
     const respondToUserInput: OpenCodeAdapterShape["respondToUserInput"] = Effect.fn(
       "respondToUserInput",
     )(function* (threadId, requestId, answers) {
-      const context = ensureSessionContext(sessions, threadId);
+      const context = ensureSessionContext(provider, sessions, threadId);
       const request = context.pendingQuestions.get(requestId);
       if (!request) {
         return yield* new ProviderAdapterRequestError({
-          provider: PROVIDER,
+          provider,
           method: "question.reply",
           detail: `Unknown pending user-input request: ${requestId}`,
         });
@@ -1348,7 +1381,7 @@ export function makeOpenCodeAdapter(
           requestID: requestId,
           answers: toOpenCodeQuestionAnswers(request, answers),
         }),
-      ).pipe(Effect.mapError(toRequestError));
+      ).pipe(Effect.mapError(mapRequestError));
     });
 
     const stopSession: OpenCodeAdapterShape["stopSession"] = Effect.fn("stopSession")(
@@ -1356,7 +1389,7 @@ export function makeOpenCodeAdapter(
         const context = sessions.get(threadId);
         if (!context) {
           throw new ProviderAdapterSessionNotFoundError({
-            provider: PROVIDER,
+            provider,
             threadId,
           });
         }
@@ -1385,12 +1418,12 @@ export function makeOpenCodeAdapter(
 
     const readThread: OpenCodeAdapterShape["readThread"] = Effect.fn("readThread")(
       function* (threadId) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = ensureSessionContext(provider, sessions, threadId);
         const messages = yield* runOpenCodeSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.openCodeSessionId,
           }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapRequestError));
 
         const turns: Array<OpenCodeTurnSnapshot> = [];
         for (const entry of messages.data ?? []) {
@@ -1411,12 +1444,12 @@ export function makeOpenCodeAdapter(
 
     const rollbackThread: OpenCodeAdapterShape["rollbackThread"] = Effect.fn("rollbackThread")(
       function* (threadId, numTurns) {
-        const context = ensureSessionContext(sessions, threadId);
+        const context = ensureSessionContext(provider, sessions, threadId);
         const messages = yield* runOpenCodeSdk("session.messages", () =>
           context.client.session.messages({
             sessionID: context.openCodeSessionId,
           }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapRequestError));
 
         const assistantMessages = (messages.data ?? []).filter(
           (entry) => entry.info.role === "assistant",
@@ -1428,7 +1461,7 @@ export function makeOpenCodeAdapter(
             sessionID: context.openCodeSessionId,
             ...(target ? { messageID: target.info.id } : {}),
           }),
-        ).pipe(Effect.mapError(toRequestError));
+        ).pipe(Effect.mapError(mapRequestError));
 
         return yield* readThread(threadId);
       },
@@ -1450,7 +1483,7 @@ export function makeOpenCodeAdapter(
       });
 
     return {
-      provider: PROVIDER,
+      provider,
       capabilities: {
         sessionModelSwitch: "in-session",
       },

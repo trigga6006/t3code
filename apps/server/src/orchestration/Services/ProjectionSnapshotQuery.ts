@@ -19,6 +19,8 @@ import type {
   ThreadId,
   UsageAnalyticsInput,
   UsageAnalyticsSummary,
+  UsageLimitsInput,
+  UsageLimitsSummary,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Option from "effect/Option";
@@ -168,6 +170,16 @@ export interface ProjectionSnapshotQueryShape {
   readonly getUsageAnalytics: (
     input: UsageAnalyticsInput,
   ) => Effect.Effect<UsageAnalyticsSummary, ProjectionRepositoryError>;
+
+  /**
+   * Latest known provider rate-limit windows (5-hour + weekly) per provider,
+   * sourced from persisted `account.rate-limits.updated` activities. Always
+   * returns an entry for every known provider, with null windows until data
+   * has been reported.
+   */
+  readonly getUsageLimits: (
+    input: UsageLimitsInput,
+  ) => Effect.Effect<UsageLimitsSummary, ProjectionRepositoryError>;
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   type PermissionUpdate,
   type SDKMessage,
   type SDKControlGetContextUsageResponse,
+  type SDKControlGetUsageResponse,
   type SDKResultMessage,
   type SettingSource,
   type SDKUserMessage,
@@ -88,6 +89,11 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
+import {
+  normalizeClaudeRateLimitEvent,
+  normalizeClaudeUsageResponse,
+  type NormalizedUsageWindow,
+} from "../usageLimits.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
@@ -209,6 +215,11 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
   readonly getContextUsage?: () => Promise<SDKControlGetContextUsageResponse>;
+  // Experimental control request behind the `/usage` command: returns the
+  // account's true plan rate-limit windows (5-hour, 7-day) with no model turn.
+  // The SDK name is explicitly unstable and will be renamed; declared optional
+  // and guarded at the call site (see `readUsageLimits`).
+  readonly usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?: () => Promise<SDKControlGetUsageResponse>;
   readonly close: () => void;
 }
 
@@ -1794,6 +1805,40 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     return normalizeClaudeContextUsageApiSnapshot(usage, totalProcessedTokens);
   });
 
+  // On-demand pull of the account's true plan usage (5-hour + weekly). Reuses a
+  // live, non-stopped session's streaming Query and issues the `/usage` control
+  // request — no model turn, no tokens. Rate limits are account-scoped, so any
+  // ready session answers; if none is live, or the SDK method is absent/throws,
+  // we resolve to an empty array and let the caller fall back to persisted data.
+  const readUsageLimits = Effect.fn("readUsageLimits")(function* () {
+    let target: ClaudeSessionContext | undefined;
+    for (const candidate of sessions.values()) {
+      if (
+        !candidate.stopped &&
+        typeof candidate.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET ===
+          "function"
+      ) {
+        target = candidate;
+        break;
+      }
+    }
+    if (!target) {
+      return [] as ReadonlyArray<NormalizedUsageWindow>;
+    }
+    const context = target;
+    const response = yield* Effect.promise(async () => {
+      try {
+        return await context.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET?.();
+      } catch {
+        return undefined;
+      }
+    });
+    if (!response) {
+      return [] as ReadonlyArray<NormalizedUsageWindow>;
+    }
+    return normalizeClaudeUsageResponse(response.rate_limits, response.rate_limits_available);
+  });
+
   const emitProposedPlanCompleted = Effect.fn("emitProposedPlanCompleted")(function* (
     context: ClaudeSessionContext,
     input: {
@@ -2835,11 +2880,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (message.type === "rate_limit_event") {
+      const windows = normalizeClaudeRateLimitEvent(message);
       yield* offerRuntimeEvent({
         ...base,
         type: "account.rate-limits.updated",
         payload: {
           rateLimits: message,
+          provider: PROVIDER,
+          ...(windows.length > 0 ? { windows } : {}),
         },
       });
       return;
@@ -3872,6 +3920,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     listSessions,
     hasSession,
     stopAll,
+    readUsageLimits,
     get streamEvents() {
       return Stream.fromQueue(runtimeEventQueue);
     },

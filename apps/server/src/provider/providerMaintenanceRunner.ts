@@ -19,6 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { resolveSpawnCommand } from "@t3tools/shared/shell";
 
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
@@ -75,8 +76,20 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
+        // Resolve the executable for the host platform before spawning. On
+        // Windows the update executables (`npm`, `pnpm`, `bun`, `vp`) are
+        // `.cmd`/`.bat` shims that Node's `spawn` cannot launch by bare name
+        // (it does not honor PATHEXT without a shell), which otherwise fails
+        // every one-click update with `spawn npm ENOENT`. `resolveSpawnCommand`
+        // resolves the shim to its full path and routes it through the shell on
+        // Windows; on POSIX it is a no-op pass-through.
+        const spawnCommand = yield* resolveSpawnCommand(input.command, input.args);
         const child = yield* input.spawner
-          .spawn(ChildProcess.make(input.command, [...input.args]))
+          .spawn(
+            ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+              shell: spawnCommand.shell,
+            }),
+          )
           .pipe(
             Effect.mapError(
               (cause) =>

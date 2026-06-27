@@ -2,8 +2,14 @@ import { useState } from "react";
 import type { UsageAnalyticsSummary, UsageAnalyticsTimeRange } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
+import { PROVIDER_ICON_BY_PROVIDER } from "../chat/providerIconUtils";
 import { TokensOverTimeChart } from "./TokensOverTimeChart";
-import { formatPercentage, formatTokensInOut } from "./analytics.logic";
+import {
+  formatPercentage,
+  formatTokensInOut,
+  type AttributableModelRow,
+  type ModelProviderAttribution,
+} from "./analytics.logic";
 
 const SWATCH_CLASSES = [
   "bg-primary",
@@ -23,11 +29,13 @@ export function ModelsPanel({
   timeRange,
   today,
   resolveModelName,
+  resolveModelProvider,
 }: {
   data: UsageAnalyticsSummary;
   timeRange: UsageAnalyticsTimeRange;
   today: string;
   resolveModelName: (slug: string) => string;
+  resolveModelProvider?: (row: AttributableModelRow) => ModelProviderAttribution | null;
 }) {
   const [expanded, setExpanded] = useState(false);
   const rows = data.modelBreakdown;
@@ -42,7 +50,12 @@ export function ModelsPanel({
         <p className="text-xs text-muted-foreground/50">No model usage in this range yet.</p>
       ) : (
         <div className="flex flex-col">
-          {visible.map((row, index) => (
+          {visible.map((row, index) => {
+            const attribution = resolveModelProvider?.(row) ?? null;
+            const ProviderIcon = attribution
+              ? PROVIDER_ICON_BY_PROVIDER[attribution.driverKind]
+              : undefined;
+            return (
             <div key={row.model} className="flex items-center gap-2 py-0.5 text-xs">
               <span
                 className={cn(
@@ -50,6 +63,12 @@ export function ModelsPanel({
                   SWATCH_CLASSES[index % SWATCH_CLASSES.length],
                 )}
               />
+              {ProviderIcon ? (
+                <ProviderIcon
+                  className="size-3 shrink-0 text-muted-foreground/70"
+                  aria-label={attribution?.displayName}
+                />
+              ) : null}
               <span className="min-w-0 flex-1 truncate font-medium text-foreground">
                 {resolveModelName(row.model)}
               </span>
@@ -60,7 +79,8 @@ export function ModelsPanel({
                 {formatPercentage(row.percentage)}
               </span>
             </div>
-          ))}
+            );
+          })}
           {hiddenCount > 0 ? (
             <button
               type="button"

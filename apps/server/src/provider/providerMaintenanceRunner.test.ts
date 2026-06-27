@@ -17,6 +17,8 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import { ProviderRegistry, type ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./providerMaintenanceRunner.ts";
@@ -128,15 +130,22 @@ function mockSpawnerLayer(
     readonly exitCode?: Effect.Effect<ChildProcessSpawner.ExitCode>;
   },
 ) {
-  return Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command) => {
-      const childProcess = command as unknown as {
-        readonly command: string;
-        readonly args: ReadonlyArray<string>;
-      };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
-    }),
+  return Layer.mergeAll(
+    Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make((command) => {
+        const childProcess = command as unknown as {
+          readonly command: string;
+          readonly args: ReadonlyArray<string>;
+        };
+        return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      }),
+    ),
+    // The runner resolves the executable via `resolveSpawnCommand` before
+    // spawning; pin the platform so that resolution is a deterministic
+    // pass-through (these tests assert raw command forwarding, not the
+    // Windows `.cmd` shim resolution that `resolveSpawnCommand` owns).
+    Layer.succeed(HostProcessPlatform, "linux"),
   );
 }
 
@@ -592,6 +601,62 @@ describe("providerMaintenanceRunner", () => {
             calls.push(args.join(" "));
             return { stdout: "updated" };
           }),
+        ),
+      ),
+    );
+  });
+
+  // Regression: on Windows the npm/pnpm/bun update executables are `.cmd`
+  // shims that Node's `spawn` cannot launch by bare name (no PATHEXT without a
+  // shell), so every one-click update failed with `spawn npm ENOENT`. The
+  // runner must route the command through `resolveSpawnCommand`, which resolves
+  // the shim to its full path and spawns it via the shell on win32.
+  it.effect("spawns the resolved .cmd shim through the shell on Windows", () => {
+    const spawned: Array<{ command: string; args: ReadonlyArray<string>; shell: unknown }> = [];
+    const npmCmdPath = "C:\\Users\\test\\AppData\\Roaming\\npm\\npm.cmd";
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const updater = yield* makeTestRunner(registry);
+
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+      assert.strictEqual(spawned.length, 1);
+      // Bare `npm` must be resolved to the absolute .cmd path and run via shell.
+      assert.strictEqual(spawned[0]?.shell, true);
+      assert.ok(
+        spawned[0]?.command.includes("npm.cmd"),
+        `expected resolved npm.cmd, got: ${spawned[0]?.command}`,
+      );
+      assert.ok(
+        !spawned.some((call) => call.command === "npm" && call.shell !== true),
+        "must never spawn bare `npm` without a shell on Windows",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const descriptor = command as unknown as {
+                readonly command: string;
+                readonly args: ReadonlyArray<string>;
+                readonly options?: { readonly shell?: unknown };
+              };
+              spawned.push({
+                command: descriptor.command,
+                args: descriptor.args,
+                shell: descriptor.options?.shell,
+              });
+              return Effect.succeed(mockHandle({ stdout: "updated" }));
+            }),
+          ),
+          Layer.succeed(HostProcessPlatform, "win32"),
+          // Resolve bare `npm` to the absolute .cmd shim deterministically so the
+          // test does not depend on the host PATH.
+          Layer.succeed(SpawnExecutableResolution, (executable) =>
+            executable === "npm" ? npmCmdPath : undefined,
+          ),
         ),
       ),
     );

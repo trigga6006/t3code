@@ -103,6 +103,12 @@ function getSelectedTraits(
   const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
+  // OpenAI/Codex models express "fast mode" as a `serviceTier` select (Standard
+  // vs Fast) rather than a `fastMode` boolean. We surface the fast tier with the
+  // same amber lightning as Claude's fast mode instead of a "Fast"/"Standard"
+  // text label, so the two providers look consistent.
+  const serviceTierDescriptor =
+    selectDescriptors.find((descriptor) => descriptor.id === "serviceTier") ?? null;
   const thinkingDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "thinking") ?? null;
 
@@ -121,8 +127,19 @@ function getSelectedTraits(
       : getDescriptorStringValue(primarySelectDescriptor)) ?? null;
   const thinkingEnabled =
     typeof thinkingDescriptor?.currentValue === "boolean" ? thinkingDescriptor.currentValue : null;
+  const serviceTierValue = getDescriptorStringValue(serviceTierDescriptor);
+  const serviceTierIsFast =
+    serviceTierValue !== null &&
+    (serviceTierValue.toLowerCase() === "fast" ||
+      (serviceTierDescriptor?.options
+        .find((option) => option.id === serviceTierValue)
+        ?.label?.toLowerCase()
+        .includes("fast") ??
+        false));
   const fastModeEnabled =
-    typeof fastModeDescriptor?.currentValue === "boolean" ? fastModeDescriptor.currentValue : false;
+    (typeof fastModeDescriptor?.currentValue === "boolean"
+      ? fastModeDescriptor.currentValue
+      : false) || serviceTierIsFast;
   const contextWindow = getDescriptorStringValue(contextWindowDescriptor);
   const selectedAgent = getDescriptorStringValue(agentDescriptor);
   const selectedAgentLabel = agentDescriptor
@@ -150,7 +167,7 @@ function getSelectedTraits(
   };
 }
 
-function getTraitsSectionVisibility(input: {
+export function getTraitsSectionVisibility(input: {
   provider: ProviderDriverKind;
   models: ReadonlyArray<ServerProviderModel>;
   model: string | null | undefined;
@@ -193,6 +210,36 @@ export function shouldRenderTraitsControls(input: {
   allowPromptInjectedEffort?: boolean;
 }): boolean {
   return getTraitsSectionVisibility(input).hasAnyControls;
+}
+
+/**
+ * Build the text shown in the traits-picker trigger (the reasoning summary).
+ * The speed controls — Claude's `fastMode` boolean and OpenAI/Codex's
+ * `serviceTier` select — are intentionally omitted: both are surfaced as the
+ * amber lightning icon to the left of this label, so the two providers render
+ * the same way.
+ */
+export function buildTraitsTriggerLabel(
+  visibility: Pick<
+    ReturnType<typeof getTraitsSectionVisibility>,
+    "descriptors" | "ultrathinkPromptControlled" | "primarySelectDescriptor"
+  >,
+): string {
+  const labels: Array<string> = [];
+  for (const descriptor of visibility.descriptors) {
+    if (descriptor.id === "fastMode" || descriptor.id === "serviceTier") continue;
+    const label =
+      visibility.ultrathinkPromptControlled &&
+      descriptor.id === visibility.primarySelectDescriptor?.id
+        ? "Ultrathink"
+        : descriptor.type === "boolean"
+          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
+          : getProviderOptionCurrentLabel(descriptor);
+    if (typeof label === "string" && label.length > 0) {
+      labels.push(label);
+    }
+  }
+  return labels.join(" · ");
 }
 
 export interface TraitsMenuContentProps {
@@ -381,21 +428,11 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const triggerLabels: Array<string> = [];
-  for (const descriptor of descriptors) {
-    // Fast Mode is surfaced as its own standalone toggle, not in the reasoning label.
-    if (descriptor.id === "fastMode") continue;
-    const label =
-      ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
-        ? "Ultrathink"
-        : descriptor.type === "boolean"
-          ? `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`
-          : getProviderOptionCurrentLabel(descriptor);
-    if (typeof label === "string" && label.length > 0) {
-      triggerLabels.push(label);
-    }
-  }
-  const triggerLabel = triggerLabels.join(" · ");
+  const triggerLabel = buildTraitsTriggerLabel({
+    descriptors,
+    ultrathinkPromptControlled,
+    primarySelectDescriptor,
+  });
 
   const isCodexStyle = provider === "codex";
 

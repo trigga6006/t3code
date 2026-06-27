@@ -36,6 +36,25 @@ describe("ProviderSettingsForm helpers", () => {
     });
   });
 
+  it("renders the OpenRouter API key as the first password field", () => {
+    const openrouter = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("openrouter")];
+    expect(openrouter).toBeDefined();
+
+    const fields = deriveProviderSettingsFields(openrouter!);
+    expect(fields.map((field) => field.key)).toEqual([
+      "apiKey",
+      "binaryPath",
+      "serverUrl",
+      "serverPassword",
+    ]);
+
+    expect(fields[0]).toMatchObject({
+      key: "apiKey",
+      label: "API key",
+      control: "password",
+    });
+  });
+
   it("preserves unknown config keys while omitting empty configurable fields", () => {
     const opencode = DRIVER_OPTION_BY_VALUE[ProviderDriverKind.make("opencode")];
     expect(opencode).toBeDefined();

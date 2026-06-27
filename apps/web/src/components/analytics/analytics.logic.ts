@@ -1,8 +1,11 @@
-import type {
-  ServerProvider,
-  UsageAnalyticsTimeRange,
-  UsageDailyCount,
-  UsageDailyTokens,
+import {
+  PROVIDER_DISPLAY_NAMES,
+  ProviderDriverKind,
+  type ModelTokenUsage,
+  type ServerProvider,
+  type UsageAnalyticsTimeRange,
+  type UsageDailyCount,
+  type UsageDailyTokens,
 } from "@t3tools/contracts";
 
 import { getDisplayModelName, type ModelEsque } from "../chat/providerIconUtils";
@@ -228,4 +231,149 @@ export function buildModelNameResolver(
     const model = bySlug.get(slug);
     return model ? getDisplayModelName(model, { preferShortName: true }) : slug;
   };
+}
+
+// --- model -> provider attribution ----------------------------------------
+
+export interface ModelProviderAttribution {
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+}
+
+/** The shape needed to attribute a usage row to a provider. */
+export type AttributableModelRow = Pick<ModelTokenUsage, "model" | "instanceId">;
+
+/**
+ * Build a resolver that attributes a model-usage row to the provider that
+ * produced it, so usage (e.g. OpenRouter's) can be grouped/badged by provider.
+ *
+ * Resolution order (most authoritative first):
+ *   1. the row's `instanceId` → the provider instance's driver,
+ *   2. the model slug appearing in a provider's discovered model list,
+ *   3. the slug's first path segment matching a known driver kind — this
+ *      covers `openrouter/<id>` slugs even before OpenRouter's dynamic model
+ *      list has loaded.
+ * Returns null when the provider can't be determined (the UI falls back to an
+ * "Other" bucket / no badge).
+ */
+export function buildModelProviderResolver(
+  providers: ReadonlyArray<ServerProvider>,
+): (row: AttributableModelRow) => ModelProviderAttribution | null {
+  const driverByInstance = new Map<string, ProviderDriverKind>();
+  const driverBySlug = new Map<string, ProviderDriverKind>();
+  const knownDrivers = new Set<string>();
+
+  for (const provider of providers) {
+    knownDrivers.add(String(provider.driver));
+    if (provider.instanceId != null) {
+      driverByInstance.set(String(provider.instanceId), provider.driver);
+    }
+    for (const model of provider.models) {
+      if (!driverBySlug.has(model.slug)) {
+        driverBySlug.set(model.slug, provider.driver);
+      }
+    }
+  }
+
+  const attribute = (driver: ProviderDriverKind): ModelProviderAttribution => ({
+    driverKind: driver,
+    displayName: PROVIDER_DISPLAY_NAMES[driver] ?? String(driver),
+  });
+
+  return (row) => {
+    if (row.instanceId) {
+      const byInstance = driverByInstance.get(row.instanceId);
+      if (byInstance) return attribute(byInstance);
+    }
+    const bySlug = driverBySlug.get(row.model);
+    if (bySlug) return attribute(bySlug);
+
+    const slashIndex = row.model.indexOf("/");
+    if (slashIndex > 0) {
+      const firstSegment = row.model.slice(0, slashIndex);
+      if (knownDrivers.has(firstSegment)) {
+        return attribute(ProviderDriverKind.make(firstSegment));
+      }
+    }
+    return null;
+  };
+}
+
+/** A provider group of model-usage rows, for the Model usage settings tab. */
+export interface ProviderUsageGroup {
+  readonly driverKind: ProviderDriverKind | null;
+  readonly displayName: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly totalTokens: number;
+  readonly percentage: number;
+  readonly models: ReadonlyArray<ModelTokenUsage>;
+}
+
+/**
+ * Group a model breakdown into per-provider buckets (descending by tokens),
+ * with each bucket's models sorted descending by tokens. Rows that can't be
+ * attributed fall into a trailing "Other" group (driverKind null).
+ */
+export function groupModelUsageByProvider(
+  modelBreakdown: ReadonlyArray<ModelTokenUsage>,
+  resolveProvider: (row: AttributableModelRow) => ModelProviderAttribution | null,
+): ReadonlyArray<ProviderUsageGroup> {
+  const OTHER_KEY = "__other__";
+  const groups = new Map<
+    string,
+    {
+      driverKind: ProviderDriverKind | null;
+      displayName: string;
+      models: ModelTokenUsage[];
+      inputTokens: number;
+      outputTokens: number;
+    }
+  >();
+
+  for (const row of modelBreakdown) {
+    const attribution = resolveProvider(row);
+    const key = attribution ? String(attribution.driverKind) : OTHER_KEY;
+    let group = groups.get(key);
+    if (!group) {
+      group = {
+        driverKind: attribution?.driverKind ?? null,
+        displayName: attribution?.displayName ?? "Other",
+        models: [],
+        inputTokens: 0,
+        outputTokens: 0,
+      };
+      groups.set(key, group);
+    }
+    group.models.push(row);
+    group.inputTokens += row.inputTokens;
+    group.outputTokens += row.outputTokens;
+  }
+
+  const totalAllTokens = modelBreakdown.reduce(
+    (sum, row) => sum + row.inputTokens + row.outputTokens,
+    0,
+  );
+
+  return Array.from(groups.values())
+    .map((group) => {
+      const totalTokens = group.inputTokens + group.outputTokens;
+      return {
+        driverKind: group.driverKind,
+        displayName: group.displayName,
+        inputTokens: group.inputTokens,
+        outputTokens: group.outputTokens,
+        totalTokens,
+        percentage: totalAllTokens > 0 ? (totalTokens / totalAllTokens) * 100 : 0,
+        models: [...group.models].sort(
+          (a, b) => b.inputTokens + b.outputTokens - (a.inputTokens + a.outputTokens),
+        ),
+      } satisfies ProviderUsageGroup;
+    })
+    .sort((a, b) => {
+      // "Other" always sorts last; otherwise descending by tokens.
+      if (a.driverKind === null) return 1;
+      if (b.driverKind === null) return -1;
+      return b.totalTokens - a.totalTokens;
+    });
 }

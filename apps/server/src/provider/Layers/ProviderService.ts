@@ -46,6 +46,7 @@ import {
   withMetrics,
 } from "../../observability/Metrics.ts";
 import { type ProviderAdapterError, ProviderValidationError } from "../Errors.ts";
+import type { NormalizedUsageWindow } from "../usageLimits.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts";
 import * as ProviderService from "../Services/ProviderService.ts";
@@ -964,6 +965,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const getCapabilities: ProviderServiceMethod<"getCapabilities"> = (instanceId) =>
     registry.getByInstance(instanceId).pipe(Effect.map((adapter) => adapter.capabilities));
 
+  const readUsageLimits: ProviderServiceMethod<"readUsageLimits"> = (instanceId) =>
+    registry
+      .getByInstance(instanceId)
+      .pipe(
+        Effect.flatMap((adapter) =>
+          adapter.readUsageLimits
+            ? adapter.readUsageLimits()
+            : Effect.succeed([] as ReadonlyArray<NormalizedUsageWindow>),
+        ),
+      );
+
   const getInstanceInfo: ProviderServiceMethod<"getInstanceInfo"> = (instanceId) =>
     registry.getInstanceInfo(instanceId);
 
@@ -1077,6 +1089,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     stopSession,
     listSessions,
     getCapabilities,
+    readUsageLimits,
     getInstanceInfo,
     rollbackConversation,
     // Each access creates a fresh PubSub subscription so that multiple

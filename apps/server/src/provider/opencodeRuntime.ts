@@ -4,6 +4,7 @@ import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3t
 import {
   createOpencodeClient,
   type Agent,
+  type Command as OpenCodeCommand,
   type FilePartInput,
   type OpencodeClient,
   type PermissionRuleset,
@@ -100,6 +101,13 @@ export interface OpenCodeCommandResult {
 export interface OpenCodeInventory {
   readonly providerList: ProviderListResponse;
   readonly agents: ReadonlyArray<Agent>;
+  /**
+   * OpenCode's unified command list (`/command` API): built-in commands,
+   * project/global custom commands, MCP prompts, and skills — each with a
+   * `name`/`description`. Surfaced as the provider's slash commands so OpenCode
+   * (and OpenCode-hosted skins like OpenRouter) get a rich `/` menu like Claude.
+   */
+  readonly commands: ReadonlyArray<OpenCodeCommand>;
 }
 
 export interface ParsedOpenCodeModelSlug {
@@ -537,10 +545,19 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       Effect.map((result) => result.data ?? []),
     );
 
-  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
-    Effect.all([loadProviders(client), loadAgents(client)], { concurrency: "unbounded" }).pipe(
-      Effect.map(([providerList, agents]) => ({ providerList, agents })),
+  // OpenCode's command list is best-effort: a server too old to expose the
+  // endpoint (or a transient failure) must not fail the whole inventory probe,
+  // so we degrade to an empty command list rather than erroring the snapshot.
+  const loadCommands = (client: OpencodeClient) =>
+    runOpenCodeSdk("command.list", () => client.command.list()).pipe(
+      Effect.map((result) => result.data ?? []),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<OpenCodeCommand>),
     );
+
+  const loadOpenCodeInventory: OpenCodeRuntimeShape["loadOpenCodeInventory"] = (client) =>
+    Effect.all([loadProviders(client), loadAgents(client), loadCommands(client)], {
+      concurrency: "unbounded",
+    }).pipe(Effect.map(([providerList, agents, commands]) => ({ providerList, agents, commands })));
 
   return {
     startOpenCodeServerProcess,

@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
   CommandId,
+  EventId,
   MessageId,
   type OrchestrationEvent,
   type OrchestrationMessage,
@@ -618,6 +619,36 @@ function runtimeEventToActivities(
           ...maybeSequence,
         },
       ];
+    }
+
+    case "account.rate-limits.updated": {
+      // Persist the normalized rate-limit windows as activities so the latest
+      // snapshot per (provider, window) can be queried for the usage-limits
+      // modal. One activity per window keeps the "latest per window" query a
+      // simple ROW_NUMBER (see ProjectionSnapshotQuery.getUsageLimits). These
+      // are intentionally hidden from the thread work-log (see
+      // deriveWorkLogEntries). Drop events that lack normalized data.
+      const provider = event.payload.provider;
+      const windows = event.payload.windows ?? [];
+      if (!provider || windows.length === 0) {
+        return [];
+      }
+      return windows.map((windowSnapshot) => ({
+        id: EventId.make(`${event.eventId}:${windowSnapshot.window}`),
+        createdAt: event.createdAt,
+        tone: "info" as const,
+        kind: "account.rate-limits.updated",
+        summary: "Rate limits updated",
+        payload: {
+          provider,
+          window: windowSnapshot.window,
+          usedPercent: windowSnapshot.usedPercent,
+          resetsAt: windowSnapshot.resetsAt,
+          windowDurationMins: windowSnapshot.windowDurationMins,
+        },
+        turnId: toTurnId(event.turnId) ?? null,
+        ...maybeSequence,
+      }));
     }
 
     default:

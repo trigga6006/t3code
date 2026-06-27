@@ -220,12 +220,92 @@ const OpenCodeAdapterTestLayer = Layer.effect(
   Layer.provideMerge(NodeServices.layer),
 );
 
+// Same runtime/config, but the adapter is told to present a different
+// first-class provider identity (`openrouter`). Exercises the provider-kind
+// parameterization: every emitted runtime event / session must be stamped
+// with the injected provider, not the default "opencode".
+const OpenRouterAdapterTestLayer = Layer.effect(
+  OpenCodeAdapter,
+  makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+    providerKind: ProviderDriverKind.make("openrouter"),
+    instanceId: ProviderInstanceId.make("openrouter"),
+  }),
+).pipe(
+  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+  Layer.provideMerge(
+    ServerSettingsService.layerTest({
+      providers: {
+        opencode: {
+          binaryPath: "fake-opencode",
+          serverUrl: "http://127.0.0.1:9999",
+          serverPassword: "secret-password",
+        },
+      },
+    }),
+  ),
+  Layer.provideMerge(providerSessionDirectoryTestLayer),
+  Layer.provideMerge(NodeServices.layer),
+);
+
 beforeEach(() => {
   runtimeMock.reset();
 });
 
 const advanceTestClock = (ms: number) =>
   TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
+
+it.layer(OpenRouterAdapterTestLayer)("OpenCodeAdapter routed as openrouter", (it) => {
+  it.effect("stamps the injected provider identity on the session", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+
+      // The adapter shape itself advertises the injected provider.
+      NodeAssert.equal(adapter.provider, "openrouter");
+
+      const session = yield* adapter.startSession({
+        provider: ProviderDriverKind.make("openrouter"),
+        threadId: asThreadId("thread-openrouter"),
+        runtimeMode: "full-access",
+      });
+
+      NodeAssert.equal(session.provider, "openrouter");
+      NodeAssert.equal(session.providerInstanceId, "openrouter");
+    }),
+  );
+
+  it.effect("stamps the injected provider on every emitted runtime event", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-openrouter-events");
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("openrouter"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.stopSession(threadId);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      NodeAssert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started", "session.exited"],
+      );
+      // Crux of the parameterization: ProviderService validates that each
+      // event's `provider` matches the instance, so all stamps must be
+      // "openrouter", never the default "opencode".
+      for (const event of events) {
+        NodeAssert.equal(event.provider, "openrouter");
+      }
+    }),
+  );
+});
 
 it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
   it.effect("reuses a configured OpenCode server URL instead of spawning a local server", () =>

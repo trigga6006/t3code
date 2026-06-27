@@ -28,7 +28,8 @@ usageLayer("ProjectionSnapshotQuery.getUsageAnalytics", (it) => {
       yield* sql`DELETE FROM projection_threads`;
       yield* sql`DELETE FROM projection_projects`;
 
-      const insertThread = (id: string, model: string, createdAt: string) => sql`
+      const insertThread = (id: string, model: string, createdAt: string, instanceId?: string) =>
+        sql`
         INSERT INTO projection_threads (
           thread_id, project_id, title, model_selection_json, runtime_mode, interaction_mode,
           branch, worktree_path, latest_turn_id, latest_user_message_at,
@@ -36,12 +37,16 @@ usageLayer("ProjectionSnapshotQuery.getUsageAnalytics", (it) => {
           created_at, updated_at, deleted_at
         ) VALUES (
           ${id}, 'project-1', ${`Thread ${id}`},
-          ${`{"provider":"x","model":"${model}"}`},
+          ${
+            instanceId
+              ? `{"provider":"x","instanceId":"${instanceId}","model":"${model}"}`
+              : `{"provider":"x","model":"${model}"}`
+          },
           'full-access', 'default', NULL, NULL, NULL, NULL, 0, 0, 0,
           ${createdAt}, ${createdAt}, NULL
         )
       `;
-      yield* insertThread("thread-1", "gpt-5-codex", "2026-02-24T10:00:00.000Z");
+      yield* insertThread("thread-1", "gpt-5-codex", "2026-02-24T10:00:00.000Z", "codex_default");
       yield* insertThread("thread-2", "claude-opus-4-8", "2026-02-25T10:00:00.000Z");
 
       const insertMessage = (id: string, threadId: string, createdAt: string) => sql`
@@ -91,6 +96,10 @@ usageLayer("ProjectionSnapshotQuery.getUsageAnalytics", (it) => {
       assert.equal(codex?.outputTokens, 400);
       assert.equal(opus?.inputTokens, 1000);
       assert.equal(opus?.outputTokens, 2000);
+      // Provider attribution: the thread's stored instanceId is surfaced for
+      // the client to map to a provider driver; null when not recorded.
+      assert.equal(codex?.instanceId, "codex_default");
+      assert.equal(opus?.instanceId, null);
 
       const day24 = summary.dailyTokens.find((day) => day.date === "2026-02-24");
       assert.equal(day24?.tokens, 500);
